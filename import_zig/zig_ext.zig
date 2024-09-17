@@ -1,80 +1,93 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const generated = @import("generated.zig");
-const py_utils = @import("py_utils.zig");
-const py = py_utils.py;
+const pyu = @import("py_utils.zig");
+const py = pyu.py;
 const zig_file = @import("inner/import_fns.zig");
 
 var zig_ext_methods = blk: {
-    var nr_methods = 0;
-    for (@typeInfo(zig_file).Struct.decls) |decl| {
-        const field = @field(zig_file, decl.name);
-        switch (@typeInfo(@TypeOf(field))) {
-            .Fn => {
-                nr_methods += 1;
-            },
-            else => {},
-        }
-    }
-    var methods: [nr_methods]py.PyMethodDef = undefined;
+    var methods: [@typeInfo(zig_file).Struct.decls.len + 1]py.PyMethodDef = undefined;
     var i_method = 0;
-    for (@typeInfo(zig_file).Struct.decls) |decl| {
-        const field = @field(zig_file, decl.name);
-        switch (@typeInfo(@TypeOf(field))) {
-            .Fn => |info| {
-                const wrapper = struct {
-                    fn wrapper(module: ?*py.PyObject, py_args: ?*py.PyObject) callconv(.C) ?*py.PyObject {
-                        _ = module;
-                        var arena = std.heap.ArenaAllocator.init(py_utils.gp_allocator);
-                        defer arena.deinit();
 
-                        comptime var types: [info.params.len]type = undefined;
-                        inline for (info.params, 0..) |param, i_type| {
-                            types[i_type] = param.type.?;
-                        }
+    for (@typeInfo(zig_file).Struct.decls) |fn_decl| {
+        const zig_func = @field(zig_file, fn_decl.name);
+        if (@typeInfo(@TypeOf(zig_func)) != .Fn) continue;
+        const fn_info = @typeInfo(@TypeOf(zig_func)).Fn;
 
-                        const arg_type = std.meta.Tuple(&types);
-                        const args = py_utils.py_to_zig(arg_type, (py_args orelse return null), arena.allocator()) catch {
-                            py_utils.raise_from(.Exception, "Error converting function arguments to zig types", .{}) catch {};
-                            return null;
-                        };
-                        const zig_ret = @call(.always_inline, field, args);
-
-                        const zig_ret_unwrapped = if (@typeInfo(@TypeOf(zig_ret)) == .ErrorUnion)
-                            zig_ret catch |err| {
-                                if (err != py_utils.PyErr.PyErr) {
-                                    py_utils.raise_from(.Exception, "Zig function returned an error: {any}", .{err}) catch {};
-                                }
-                                return null;
-                            }
-                        else
-                            zig_ret;
-
-                        return py_utils.zig_to_py(zig_ret_unwrapped) catch {
-                            py_utils.raise_from(.Exception, "Error converting zig return values to python types", .{}) catch {};
-                            return null;
-                        };
+        var i_allocator: isize = -1;
+        const arg_type = std.meta.Tuple(&T: {
+            var types: [fn_info.params.len]type = undefined;
+            for (fn_info.params, 0..) |param, i_type| {
+                const T = param.type.?;
+                types[i_type] = T;
+                if (T == std.mem.Allocator) {
+                    if (i_allocator != -1) {
+                        @compileError("Can only request allocator once per function");
                     }
-                }.wrapper;
-                methods[i_method] = py.PyMethodDef{
-                    .ml_name = decl.name,
-                    .ml_meth = wrapper,
-                    .ml_flags = py.METH_VARARGS,
-                    .ml_doc = null,
+                    i_allocator = i_type;
+                }
+            }
+            break :T types;
+        });
+
+        const n_py_args = if (i_allocator != -1) fn_info.params.len - 1 else fn_info.params.len;
+
+        const wrapper = struct {
+            fn wrapper(_: ?*py.PyObject, py_args: [*]*py.PyObject, n_py_args_runtime: isize) callconv(.C) ?*py.PyObject {
+                var arena = std.heap.ArenaAllocator.init(pyu.gp_allocator);
+                defer arena.deinit();
+                const allocator = arena.allocator();
+                var args: arg_type = undefined;
+                if (n_py_args != n_py_args_runtime) {
+                    pyu.raise(.Exception, "Expected {} arguments, received {}", .{ n_py_args, n_py_args_runtime }) catch {};
+                    return null;
+                }
+                inline for (@typeInfo(arg_type).Struct.fields, 0..) |field, i_field| {
+                    if (i_field == i_allocator) {
+                        @field(args, field.name) = allocator;
+                        continue;
+                    }
+                    const py_arg = py_args[i_field - @intFromBool(i_allocator != -1 and i_field > i_allocator)];
+                    @field(args, field.name) = pyu.py_to_zig(field.type, py_arg, allocator) catch {
+                        pyu.raise(.Exception, "Error converting function arguments to zig types", .{}) catch {};
+                        return null;
+                    };
+                }
+
+                const zig_ret = @call(.always_inline, zig_func, args);
+
+                const zig_ret_unwrapped = if (@typeInfo(@TypeOf(zig_ret)) == .ErrorUnion)
+                    zig_ret catch |err| {
+                        if (err != pyu.PyErr.PyErr) {
+                            pyu.raise(.Exception, "Zig function returned an error: {any}", .{err}) catch {};
+                        }
+                        return null;
+                    }
+                else
+                    zig_ret;
+
+                return pyu.zig_to_py(zig_ret_unwrapped) catch {
+                    pyu.raise(.Exception, "Error converting zig return values to python types", .{}) catch {};
+                    return null;
                 };
-            },
-            else => continue,
-        }
+            }
+        }.wrapper;
+
+        methods[i_method] = py.PyMethodDef{
+            .ml_name = fn_decl.name,
+            .ml_meth = @ptrCast(&wrapper),
+            .ml_flags = py.METH_FASTCALL,
+            .ml_doc = null,
+        };
         i_method += 1;
     }
-    break :blk methods ++ [_]py.PyMethodDef{
-        py.PyMethodDef{
-            .ml_name = null,
-            .ml_meth = null,
-            .ml_flags = 0,
-            .ml_doc = null,
-        },
+    methods[i_method] = py.PyMethodDef{
+        .ml_name = null,
+        .ml_meth = null,
+        .ml_flags = 0,
+        .ml_doc = null,
     };
+    break :blk methods;
 };
 
 var zig_ext_module = py.PyModuleDef{
@@ -98,7 +111,8 @@ var zig_ext_module = py.PyModuleDef{
 };
 
 fn init() callconv(.C) ?*py.PyObject {
-    return py.PyModule_Create(&zig_ext_module);
+    const module = py.PyModule_Create(&zig_ext_module);
+    return module;
 }
 
 comptime {

@@ -69,16 +69,8 @@ def import_zig(
                 with (temppath_inner / "import_fns.zig").open("w") as f:
                     f.write(source_code)
 
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "ziglang",
-                "build",
-            ],
-            cwd=tempdir,
-            check=True,
-        )
+        args = [sys.executable, "-m", "ziglang", "build"]
+        subprocess.run(args, cwd=tempdir, check=True)
 
         (binary,) = (p for p in (temppath / "zig-out").glob("**/*") if p.is_file())
         new_binary = temppath / (module_name + sysconfig.get_config_var("EXT_SUFFIX"))

@@ -11,7 +11,7 @@ pub const gp_allocator = gpa.allocator();
 pub const PyErr = error{PyErr};
 const Exceptions = enum { Exception, NotImplemented, TypeError, ValueError };
 
-pub fn raise_args(exc: Exceptions, comptime msg: []const u8, args: anytype) PyErr {
+pub fn raise(exc: Exceptions, comptime msg: []const u8, args: anytype) PyErr {
     @setCold(true);
     const pyexc = switch (exc) {
         .Exception => py.PyExc_Exception,
@@ -21,20 +21,13 @@ pub fn raise_args(exc: Exceptions, comptime msg: []const u8, args: anytype) PyEr
     };
     const formatted = std.fmt.allocPrintZ(gp_allocator, msg, args) catch "Error formatting error message";
     defer gp_allocator.free(formatted);
+    const cause = py.PyErr_GetRaisedException();
     py.PyErr_SetString(pyexc, formatted.ptr);
-    return PyErr.PyErr;
-}
-
-pub fn raise(exc: Exceptions, comptime msg: []const u8) PyErr {
-    return raise_args(exc, msg, .{});
-}
-
-pub fn raise_from(exc: Exceptions, comptime msg: []const u8, args: anytype) PyErr {
-    const xc1 = py.PyErr_GetRaisedException();
-    raise_args(exc, msg, args) catch {};
-    const xc2 = py.PyErr_GetRaisedException();
-    py.PyException_SetCause(xc2, xc1);
-    py.PyErr_SetRaisedException(xc2);
+    if (cause) |_| {
+        const consequence = py.PyErr_GetRaisedException();
+        py.PyException_SetCause(consequence, cause);
+        py.PyErr_SetRaisedException(consequence);
+    }
     return PyErr.PyErr;
 }
 
@@ -85,10 +78,19 @@ pub fn zig_to_py(value: anytype) !*py.PyObject {
                             .name = field.name,
                         };
                     }
+
                     var desc: py.PyStructSequence_Desc = .{
                         .doc = "Generated in order to convert Zig struct " ++ type_name ++ " to Python object",
                         .n_in_sequence = fields.len - 1,
-                        .name = type_name,
+                        // Fully qualified name would be too verbose
+                        .name = comptime name: {
+                            var name: []const u8 = undefined;
+                            var tokenizer = std.mem.tokenize(u8, type_name, ".");
+                            while (tokenizer.next()) |token| {
+                                name = token;
+                            }
+                            break :name name ++ "";
+                        },
                         .fields = &fields,
                     };
                     const tp = py.PyStructSequence_NewType(&desc) orelse return PyErr.PyErr;
@@ -126,7 +128,7 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
             if (py.PyErr_Occurred() != null) {
                 return PyErr.PyErr;
             }
-            return std.math.cast(zig_type, val) orelse return raise(.ValueError, "Expected smaller integer");
+            return std.math.cast(zig_type, val) orelse return raise(.ValueError, "Expected integer to fit into {any}", .{zig_type});
         },
         .Pointer => |info| {
             switch (info.size) {
@@ -183,7 +185,7 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
                         py_value,
                         field.name,
                     ) orelse {
-                        return raise_args(.TypeError, "Could not get dict value for key={s}", .{field.name});
+                        return raise(.TypeError, "Could not get dict value for key={s}", .{field.name});
                     };
                     @field(zig_value, field.name) = try py_to_zig(
                         field.type,
@@ -195,7 +197,7 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
                 switch (py.PyObject_Length(py_value)) {
                     -1 => return PyErr.PyErr,
                     n_fields => return zig_value,
-                    else => return raise(.TypeError, "Dict length does not match struct length"),
+                    else => |len| return raise(.TypeError, "Dict had length {}, expected {}", .{ len, n_fields }),
                 }
             } else {
                 comptime var n_fields = 0;
@@ -217,7 +219,7 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
                 switch (py.PyObject_Length(py_value)) {
                     -1 => return PyErr.PyErr,
                     n_fields => return zig_value,
-                    else => return raise(.TypeError, "Sequence length does not match struct length"),
+                    else => |len| return raise(.TypeError, "Sequence had length {}, expected {}", .{ len, n_fields }),
                 }
                 return zig_value;
             }
