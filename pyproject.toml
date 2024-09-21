@@ -18,6 +18,10 @@ classifiers = [
 dependencies = ["ziglang==0.13"]
 version = "0.13.0"
 
+[project.urls]
+Homepage = "https://github.com/ffelixg/import_zig"
+Issues = "https://github.com/ffelixg/import_zig/issues"
+
 [tool.setuptools]
 py-modules = ["import_zig"]
 packages = ["import_zig"]
