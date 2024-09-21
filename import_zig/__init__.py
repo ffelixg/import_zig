@@ -1,11 +1,12 @@
 from pathlib import Path
-from shutil import copyfile
+from shutil import copyfile, copytree
 from tempfile import TemporaryDirectory
 from importlib import import_module
 import sysconfig
 import sys
 import subprocess
 import random
+import platform
 
 _copy_paths = [
     Path(__file__).parent / "build.zig",
@@ -14,11 +15,14 @@ _copy_paths = [
 ]
 
 
+_is_windows = platform.system() == "Windows"
+
+
 def _escape(path: str) -> str:
     return path.replace("\\", "\\\\")
 
 
-def prepare(path: str | Path, module_name: str, symlink_only: bool = False):
+def prepare(path: str | Path, module_name: str, hardlink_only: bool = False):
     """
     Link/Create files at path needed to compile the Zig code
 
@@ -31,8 +35,9 @@ def prepare(path: str | Path, module_name: str, symlink_only: bool = False):
 
     for src in _copy_paths:
         tgt = path / src.name
-        if symlink_only:
-            (tgt).symlink_to(src)
+        if hardlink_only:
+            # Symlinks are buggy on windows
+            (tgt).hardlink_to(src)
         else:
             copyfile(src, tgt)
 
@@ -43,7 +48,7 @@ def prepare(path: str | Path, module_name: str, symlink_only: bool = False):
         str(Path(sysconfig.get_config_var("installed_base"), "Libs").absolute())
     ]
 
-    with (path / "generated.zig").open("w") as f:
+    with (path / "generated.zig").open("w", encoding="utf-8") as f:
         f.write(
             f"pub const include: [{len(include_dirs)}][]const u8 = .{{\n"
             + "".join(f'    "{p}",\n' for p in map(_escape, include_dirs))
@@ -75,23 +80,37 @@ def compile_to(
 
     with TemporaryDirectory(prefix="import_zig_compile_") as tempdir:
         temppath = Path(tempdir)
-        prepare(temppath, module_name, symlink_only=True)
+        prepare(temppath, module_name, hardlink_only=True)
 
         temppath_inner = temppath / "inner"
         if directory is not None:
             temppath_inner.rmdir()
-            temppath_inner.symlink_to(Path(directory).absolute())
+            if _is_windows:
+                copytree(Path(directory).absolute(), temppath_inner)
+            else:
+                temppath_inner.symlink_to(Path(directory).absolute())
         elif file is not None:
-            (temppath_inner / "import_fns.zig").symlink_to(Path(file).absolute())
+            (temppath_inner / "import_fns.zig").hardlink_to(Path(file).absolute())
         else:
             assert source_code is not None
-            with (temppath_inner / "import_fns.zig").open("w") as f:
+            with (temppath_inner / "import_fns.zig").open("w", encoding="utf-8") as f:
                 f.write(source_code)
 
-        args = [sys.executable, "-m", "ziglang", "build"]
+        args = [
+            sys.executable,
+            "-m",
+            "ziglang",
+            "build",
+            *(["-Dtarget=x86_64-windows"] if _is_windows else []),
+        ]
         subprocess.run(args, cwd=tempdir, check=True)
 
-        (binary,) = (p for p in (temppath / "zig-out").glob("**/*") if p.is_file())
+        (binary,) = (
+            p
+            for p in (temppath / "zig-out").glob(f"**/*{'.dll' if _is_windows else ''}")
+            if p.is_file()
+        )
+
         binary.rename(
             Path(target_dir) / (module_name + sysconfig.get_config_var("EXT_SUFFIX"))
         )
@@ -129,7 +148,11 @@ def import_zig(
     if module_name is None:
         module_name = f"zig_ext_{hex(random.randint(0, 2**128))[2:]}"
 
-    with TemporaryDirectory(prefix="import_zig_") as tempdir:
+    # For some reason the binary can't be deleted on windows, so it will live on
+    # due to ignore_cleanup_errors. Hopefully the OS takes care of it eventually.
+    with TemporaryDirectory(
+        prefix="import_zig_", ignore_cleanup_errors=True
+    ) as tempdir:
         compile_to(
             tempdir,
             source_code=source_code,
@@ -143,5 +166,3 @@ def import_zig(
         finally:
             sys.path.remove(tempdir)
         return module
-
-

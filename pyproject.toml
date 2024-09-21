@@ -21,3 +21,4 @@ version = "0.13.0"
 [tool.setuptools]
 py-modules = ["import_zig"]
 packages = ["import_zig"]
+package-data = {import_zig = ["*.zig"]}
