@@ -31,30 +31,43 @@ pub fn raise(exc: Exceptions, comptime msg: []const u8, args: anytype) PyErr {
     return PyErr.PyErr;
 }
 
+fn toPyList(value: anytype) !*py.PyObject {
+    const pylist = py.PyList_New(@intCast(value.len)) orelse return PyErr.PyErr;
+    errdefer py.Py_DECREF(pylist);
+    for (value, 0..) |entry, i_entry| {
+        const py_entry = try zig_to_py(entry);
+        if (py.PyList_SetItem(pylist, @intCast(i_entry), py_entry) == -1) {
+            py.Py_DECREF(py_entry);
+            return PyErr.PyErr;
+        }
+    }
+    return pylist;
+}
+
 var struct_tuple_map = std.StringHashMap(?*py.PyTypeObject).init(gp_allocator);
 
 /// Steals a reference when passed PyObjects
 pub fn zig_to_py(value: anytype) !*py.PyObject {
-    // @compileLog("val: {any}, type: {any}\n", value, @typeInfo(@TypeOf(value)));
     return switch (@typeInfo(@TypeOf(value))) {
         .Int => |info| if (info.signedness == .signed) py.PyLong_FromLongLong(@as(c_longlong, value)) else py.PyLong_FromUnsignedLongLong(@as(c_ulonglong, value)),
         .ComptimeInt => if (value < 0) py.PyLong_FromLongLong(@as(c_longlong, value)) else py.PyLong_FromUnsignedLongLong(@as(c_ulonglong, value)),
+        .Void => py.Py_NewRef(py.Py_None()),
+        .Float => py.PyFloat_FromDouble(@floatCast(value)),
+        .ComptimeFloat => py.PyFloat_FromDouble(@floatCast(value)),
+        .Bool => py.PyBool_FromLong(@intFromBool(value)),
+        .Optional => if (value) |v| zig_to_py(v) catch null else py.Py_NewRef(py.Py_None()),
+        .Array => |info| if (info.sentinel) |_|
+            @compileError("Sentinel is not supported")
+        else
+            toPyList(value) catch null,
         .Pointer => |info| if (info.child == u8 and info.size == .Slice)
             py.PyUnicode_FromStringAndSize(value.ptr, @intCast(value.len))
         else if (info.child == py.PyObject and info.size == .One)
             @as(?*py.PyObject, value)
-        else if (info.size == .Slice) blk: {
-            const ret = py.PyList_New(@intCast(value.len)) orelse return PyErr.PyErr;
-            errdefer py.Py_DECREF(ret);
-            for (value, 0..) |entry, i_entry| {
-                const py_entry = try zig_to_py(entry);
-                if (py.PyList_SetItem(ret, @intCast(i_entry), py_entry) == -1) {
-                    py.Py_DECREF(py_entry);
-                    return PyErr.PyErr;
-                }
-            }
-            break :blk ret;
-        } else unreachable,
+        else if (info.size == .Slice)
+            toPyList(value) catch null
+        else
+            unreachable,
         .Struct => |info| blk: {
             if (info.is_tuple) {
                 const tuple = py.PyTuple_New(info.fields.len) orelse return PyErr.PyErr;
@@ -89,7 +102,7 @@ pub fn zig_to_py(value: anytype) !*py.PyObject {
                             while (tokenizer.next()) |token| {
                                 name = token;
                             }
-                            break :name name ++ "";
+                            break :name "import_zig." ++ name ++ "";
                         },
                         .fields = &fields,
                     };
@@ -109,8 +122,6 @@ pub fn zig_to_py(value: anytype) !*py.PyObject {
                 break :blk tuple;
             }
         },
-        .Void => py.Py_NewRef(py.Py_None()),
-        .Float => py.PyFloat_FromDouble(@floatCast(value)),
         else => |info| {
             @compileLog("unsupported py-type conversion", info);
             comptime unreachable;
@@ -129,6 +140,43 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
                 return PyErr.PyErr;
             }
             return std.math.cast(zig_type, val) orelse return raise(.ValueError, "Expected integer to fit into {any}", .{zig_type});
+        },
+        .Float => {
+            const val: zig_type = @floatCast(py.PyFloat_AsDouble(py_value));
+            if (py.PyErr_Occurred() != null) {
+                return PyErr.PyErr;
+            }
+            return val;
+        },
+        .Bool => {
+            switch (py.PyObject_IsTrue(py_value)) {
+                -1 => return PyErr.PyErr,
+                0 => return false,
+                1 => return true,
+                else => unreachable,
+            }
+        },
+        .Optional => |info| {
+            switch (py.Py_IsNone(py_value)) {
+                1 => return null,
+                0 => return try py_to_zig(info.child, py_value, allocator),
+                else => unreachable,
+            }
+        },
+        .Array => |info| {
+            if (info.sentinel) |_| @compileError("Sentinel is not supported");
+            switch (py.PyObject_Length(py_value)) {
+                -1 => return PyErr.PyErr,
+                info.len => {},
+                else => |len| return raise(.TypeError, "Sequence had length {}, expected {}", .{ len, info.len }),
+            }
+            var zig_value: zig_type = undefined;
+            for (0..info.len) |i| {
+                const py_value_inner = py.PySequence_GetItem(py_value, @intCast(i)) orelse return PyErr.PyErr;
+                defer py.Py_DECREF(py_value_inner);
+                zig_value[i] = try py_to_zig(info.child, py_value_inner, allocator);
+            }
+            return zig_value;
         },
         .Pointer => |info| {
             switch (info.size) {
@@ -176,11 +224,6 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
             if (py.PyDict_Check(py_value) != 0) {
                 comptime var n_fields = 0;
                 inline for (info.fields) |field| {
-                    // Magic trick to pass in an allocator
-                    if (field.type == std.mem.Allocator) {
-                        @field(zig_value, field.name) = allocator.?;
-                        continue;
-                    }
                     const py_value_inner = py.PyDict_GetItemString(
                         py_value,
                         field.name,
@@ -202,11 +245,6 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
             } else {
                 comptime var n_fields = 0;
                 inline for (info.fields) |field| {
-                    // Magic trick to pass in an allocator
-                    if (field.type == std.mem.Allocator) {
-                        @field(zig_value, field.name) = allocator.?;
-                        continue;
-                    }
                     const py_value_inner = py.PySequence_GetItem(py_value, n_fields) orelse return PyErr.PyErr;
                     defer py.Py_DECREF(py_value_inner);
                     @field(zig_value, field.name) = try py_to_zig(
@@ -223,13 +261,6 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
                 }
                 return zig_value;
             }
-        },
-        .Float => {
-            const val: zig_type = @floatCast(py.PyFloat_AsDouble(py_value));
-            if (py.PyErr_Occurred() != null) {
-                return PyErr.PyErr;
-            }
-            return val;
         },
         else => {},
     }
