@@ -5,9 +5,20 @@ const pyu = @import("py_utils.zig");
 const py = pyu.py;
 const zig_file = @import("inner/import_fns.zig");
 
+fn list_to_arr(T: type, list: *std.SinglyLinkedList(T)) [list.len()]T {
+    var arr: [list.len()]T = undefined;
+    var idx: usize = list.len();
+    while (list.popFirst()) |node| {
+        idx -= 1;
+        arr[idx] = node.data;
+    }
+    std.debug.assert(idx == 0);
+    return arr;
+}
+
 var zig_ext_methods = blk: {
-    var methods: [@typeInfo(zig_file).Struct.decls.len + 1]py.PyMethodDef = undefined;
-    var i_method = 0;
+    var methods = std.SinglyLinkedList(py.PyMethodDef){ .first = null };
+    const methods_node = @TypeOf(methods).Node;
 
     for (@typeInfo(zig_file).Struct.decls) |fn_decl| {
         const zig_func = @field(zig_file, fn_decl.name);
@@ -73,21 +84,26 @@ var zig_ext_methods = blk: {
             }
         }.wrapper;
 
-        methods[i_method] = py.PyMethodDef{
-            .ml_name = fn_decl.name,
-            .ml_meth = @ptrCast(&wrapper),
-            .ml_flags = py.METH_FASTCALL,
-            .ml_doc = null,
+        var node = methods_node{
+            .data = py.PyMethodDef{
+                .ml_name = fn_decl.name,
+                .ml_meth = @ptrCast(&wrapper),
+                .ml_flags = py.METH_FASTCALL,
+                .ml_doc = null,
+            },
         };
-        i_method += 1;
+        methods.prepend(&node);
     }
-    methods[i_method] = py.PyMethodDef{
-        .ml_name = null,
-        .ml_meth = null,
-        .ml_flags = 0,
-        .ml_doc = null,
+    var node = methods_node{
+        .data = py.PyMethodDef{
+            .ml_name = null,
+            .ml_meth = null,
+            .ml_flags = 0,
+            .ml_doc = null,
+        },
     };
-    break :blk methods;
+    methods.prepend(&node);
+    break :blk list_to_arr(py.PyMethodDef, &methods);
 };
 
 var zig_ext_module = py.PyModuleDef{
