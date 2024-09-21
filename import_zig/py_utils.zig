@@ -21,12 +21,18 @@ pub fn raise(exc: Exceptions, comptime msg: []const u8, args: anytype) PyErr {
     };
     const formatted = std.fmt.allocPrintZ(gp_allocator, msg, args) catch "Error formatting error message";
     defer gp_allocator.free(formatted);
-    const cause = py.PyErr_GetRaisedException();
-    py.PyErr_SetString(pyexc, formatted.ptr);
-    if (cause) |_| {
-        const consequence = py.PyErr_GetRaisedException();
-        py.PyException_SetCause(consequence, cause);
-        py.PyErr_SetRaisedException(consequence);
+
+    // new in Python 3.12, for older versions we just overwrite exceptions.
+    if (@hasField(py, "PyErr_GetRaisedException")) {
+        const cause = py.PyErr_GetRaisedException();
+        py.PyErr_SetString(pyexc, formatted.ptr);
+        if (cause) |_| {
+            const consequence = py.PyErr_GetRaisedException();
+            py.PyException_SetCause(consequence, cause);
+            py.PyErr_SetRaisedException(consequence);
+        }
+    } else {
+        py.PyErr_SetString(pyexc, formatted.ptr);
     }
     return PyErr.PyErr;
 }
