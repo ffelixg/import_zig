@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "import_zig"
+authors = [{name = "Felix Graßl"}]
+description = "Compile and import Zig functions at runtime without building a package"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["zig", "ziglang", "import", "compile"]
+license = {text = "MIT"}
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+dependencies = ["ziglang==0.13"]
+version = "0.13.0"
+
+[tool.setuptools]
+py-modules = ["import_zig"]
+packages = ["import_zig"]
