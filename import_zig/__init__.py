@@ -17,12 +17,20 @@ _copy_paths = [
 
 _is_windows = platform.system() == "Windows"
 
+def link_or_copy(src: Path, tgt: Path, force_copy: bool) -> None:
+    if _is_windows or force_copy:
+        if src.is_file():
+            copyfile(src, tgt)
+        else:
+            copytree(src, tgt)
+    else:
+        tgt.symlink_to(src)
 
 def _escape(path: str) -> str:
     return path.replace("\\", "\\\\")
 
 
-def prepare(path: str | Path, module_name: str, hardlink_only: bool = False):
+def prepare(path: str | Path, module_name: str, force_copy: bool = True) -> None:
     """
     Link/Create files at path needed to compile the Zig code
 
@@ -34,12 +42,7 @@ def prepare(path: str | Path, module_name: str, hardlink_only: bool = False):
         path.mkdir()
 
     for src in _copy_paths:
-        tgt = path / src.name
-        if hardlink_only:
-            # Symlinks are buggy on windows
-            (tgt).hardlink_to(src)
-        else:
-            copyfile(src, tgt)
+        link_or_copy(src, path / src.name, force_copy)
 
     (path / "inner").mkdir()
 
@@ -80,17 +83,14 @@ def compile_to(
 
     with TemporaryDirectory(prefix="import_zig_compile_") as tempdir:
         temppath = Path(tempdir)
-        prepare(temppath, module_name, hardlink_only=True)
+        prepare(temppath, module_name, force_copy=False)
 
         temppath_inner = temppath / "inner"
         if directory is not None:
             temppath_inner.rmdir()
-            if _is_windows:
-                copytree(Path(directory).absolute(), temppath_inner)
-            else:
-                temppath_inner.symlink_to(Path(directory).absolute())
+            link_or_copy(Path(directory).absolute(), temppath_inner, force_copy=False)
         elif file is not None:
-            (temppath_inner / "import_fns.zig").hardlink_to(Path(file).absolute())
+            link_or_copy(Path(file).absolute(), temppath_inner / "import_fns.zig", force_copy=False)
         else:
             assert source_code is not None
             with (temppath_inner / "import_fns.zig").open("w", encoding="utf-8") as f:
