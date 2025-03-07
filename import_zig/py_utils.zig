@@ -12,7 +12,7 @@ pub const PyErr = error{PyErr};
 const Exceptions = enum { Exception, NotImplemented, TypeError, ValueError };
 
 pub fn raise(exc: Exceptions, comptime msg: []const u8, args: anytype) PyErr {
-    @setCold(true);
+    @branchHint(.cold);
     const pyexc = switch (exc) {
         .Exception => py.PyExc_Exception,
         .NotImplemented => py.PyExc_NotImplementedError,
@@ -55,26 +55,26 @@ var struct_tuple_map = std.StringHashMap(?*py.PyTypeObject).init(gp_allocator);
 /// Steals a reference when passed PyObjects
 pub fn zig_to_py(value: anytype) !*py.PyObject {
     return switch (@typeInfo(@TypeOf(value))) {
-        .Int => |info| if (info.signedness == .signed) py.PyLong_FromLongLong(@as(c_longlong, value)) else py.PyLong_FromUnsignedLongLong(@as(c_ulonglong, value)),
-        .ComptimeInt => if (value < 0) py.PyLong_FromLongLong(@as(c_longlong, value)) else py.PyLong_FromUnsignedLongLong(@as(c_ulonglong, value)),
-        .Void => py.Py_NewRef(py.Py_None()),
-        .Float => py.PyFloat_FromDouble(@floatCast(value)),
-        .ComptimeFloat => py.PyFloat_FromDouble(@floatCast(value)),
-        .Bool => py.PyBool_FromLong(@intFromBool(value)),
-        .Optional => if (value) |v| zig_to_py(v) catch null else py.Py_NewRef(py.Py_None()),
-        .Array => |info| if (info.sentinel) |_|
+        .int => |info| if (info.signedness == .signed) py.PyLong_FromLongLong(@as(c_longlong, value)) else py.PyLong_FromUnsignedLongLong(@as(c_ulonglong, value)),
+        .comptime_int => if (value < 0) py.PyLong_FromLongLong(@as(c_longlong, value)) else py.PyLong_FromUnsignedLongLong(@as(c_ulonglong, value)),
+        .void => py.Py_NewRef(py.Py_None()),
+        .float => py.PyFloat_FromDouble(@floatCast(value)),
+        .comptime_float => py.PyFloat_FromDouble(@floatCast(value)),
+        .bool => py.PyBool_FromLong(@intFromBool(value)),
+        .optional => if (value) |v| zig_to_py(v) catch null else py.Py_NewRef(py.Py_None()),
+        .array => |info| if (info.sentinel_ptr) |_|
             @compileError("Sentinel is not supported")
         else
             toPyList(value) catch null,
-        .Pointer => |info| if (info.child == u8 and info.size == .Slice)
+        .pointer => |info| if (info.child == u8 and info.size == .slice)
             py.PyUnicode_FromStringAndSize(value.ptr, @intCast(value.len))
-        else if (info.child == py.PyObject and info.size == .One)
+        else if (info.child == py.PyObject and info.size == .one)
             @as(?*py.PyObject, value)
-        else if (info.size == .Slice)
+        else if (info.size == .slice)
             toPyList(value) catch null
         else
             unreachable,
-        .Struct => |info| blk: {
+        .@"struct" => |info| blk: {
             if (info.is_tuple) {
                 const tuple = py.PyTuple_New(info.fields.len) orelse return PyErr.PyErr;
                 errdefer py.Py_DECREF(tuple);
@@ -104,7 +104,7 @@ pub fn zig_to_py(value: anytype) !*py.PyObject {
                         // Fully qualified name would be too verbose
                         .name = comptime name: {
                             var name: []const u8 = undefined;
-                            var tokenizer = std.mem.tokenize(u8, type_name, ".");
+                            var tokenizer = std.mem.tokenizeScalar(u8, type_name, '.');
                             while (tokenizer.next()) |token| {
                                 name = token;
                             }
@@ -140,21 +140,21 @@ pub fn zig_to_py(value: anytype) !*py.PyObject {
 /// Similary, when a PyObject is requested, the reference is borrowed.
 pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.Allocator) !zig_type {
     switch (@typeInfo(zig_type)) {
-        .Int => |info| {
+        .int => |info| {
             const val = if (info.signedness == .signed) py.PyLong_AsLongLong(py_value) else py.PyLong_AsUnsignedLongLong(py_value);
             if (py.PyErr_Occurred() != null) {
                 return PyErr.PyErr;
             }
             return std.math.cast(zig_type, val) orelse return raise(.ValueError, "Expected integer to fit into {any}", .{zig_type});
         },
-        .Float => {
+        .float => {
             const val: zig_type = @floatCast(py.PyFloat_AsDouble(py_value));
             if (py.PyErr_Occurred() != null) {
                 return PyErr.PyErr;
             }
             return val;
         },
-        .Bool => {
+        .bool => {
             switch (py.PyObject_IsTrue(py_value)) {
                 -1 => return PyErr.PyErr,
                 0 => return false,
@@ -162,15 +162,15 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
                 else => unreachable,
             }
         },
-        .Optional => |info| {
+        .optional => |info| {
             switch (py.Py_IsNone(py_value)) {
                 1 => return null,
                 0 => return try py_to_zig(info.child, py_value, allocator),
                 else => unreachable,
             }
         },
-        .Array => |info| {
-            if (info.sentinel) |_| @compileError("Sentinel is not supported");
+        .array => |info| {
+            if (info.sentinel_ptr) |_| @compileError("Sentinel is not supported");
             switch (py.PyObject_Length(py_value)) {
                 -1 => return PyErr.PyErr,
                 info.len => {},
@@ -184,15 +184,15 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
             }
             return zig_value;
         },
-        .Pointer => |info| {
+        .pointer => |info| {
             switch (info.size) {
-                .One => {
+                .one => {
                     if (info.child == py.PyObject) {
                         return py_value;
                     } else @compileError("Only PyObject is supported for One-Pointer");
                 },
-                .Many => @compileError("Many Pointer not supported"),
-                .Slice => {
+                .many => @compileError("Many Pointer not supported"),
+                .slice => {
                     if (info.child == u8) {
                         var size: py.Py_ssize_t = -1;
                         const char_ptr = py.PyUnicode_AsUTF8AndSize(py_value, &size) orelse return PyErr.PyErr;
@@ -219,10 +219,10 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
                         return slice;
                     }
                 },
-                .C => @compileError("C Pointer not supported"),
+                .c => @compileError("C Pointer not supported"),
             }
         },
-        .Struct => |info| {
+        .@"struct" => |info| {
             var zig_value: zig_type = undefined;
             if (info.fields.len == 0) {
                 return zig_value;

@@ -16,10 +16,10 @@ pub fn build(b: *std.Build) void {
     inline for (generated.include) |path| {
         lib.addIncludePath(.{ .cwd_relative = path });
     }
-    inline for (generated.lib) |path| {
-        lib.addLibraryPath(.{ .cwd_relative = path });
-    }
     if (target.query.os_tag == .windows) {
+        inline for (generated.lib) |path| {
+            lib.addLibraryPath(.{ .cwd_relative = path });
+        }
         lib.linkSystemLibrary2("python3", .{ .needed = true, .preferred_link_mode = .static });
     }
     lib.linker_allow_shlib_undefined = true;

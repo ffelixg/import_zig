@@ -20,10 +20,10 @@ var zig_ext_methods = blk: {
     var methods = std.SinglyLinkedList(py.PyMethodDef){ .first = null };
     const methods_node = @TypeOf(methods).Node;
 
-    for (@typeInfo(zig_file).Struct.decls) |fn_decl| {
+    for (@typeInfo(zig_file).@"struct".decls) |fn_decl| {
         const zig_func = @field(zig_file, fn_decl.name);
-        if (@typeInfo(@TypeOf(zig_func)) != .Fn) continue;
-        const fn_info = @typeInfo(@TypeOf(zig_func)).Fn;
+        if (@typeInfo(@TypeOf(zig_func)) != .@"fn") continue;
+        const fn_info = @typeInfo(@TypeOf(zig_func)).@"fn";
 
         var i_allocator: isize = -1;
         const arg_type = std.meta.Tuple(&T: {
@@ -53,7 +53,7 @@ var zig_ext_methods = blk: {
                     pyu.raise(.Exception, "Expected {} arguments, received {}", .{ n_py_args, n_py_args_runtime }) catch {};
                     return null;
                 }
-                inline for (@typeInfo(arg_type).Struct.fields, 0..) |field, i_field| {
+                inline for (@typeInfo(arg_type).@"struct".fields, 0..) |field, i_field| {
                     if (i_field == i_allocator) {
                         @field(args, field.name) = allocator;
                         continue;
@@ -67,7 +67,7 @@ var zig_ext_methods = blk: {
 
                 const zig_ret = @call(.always_inline, zig_func, args);
 
-                const zig_ret_unwrapped = if (@typeInfo(@TypeOf(zig_ret)) == .ErrorUnion)
+                const zig_ret_unwrapped = if (@typeInfo(@TypeOf(zig_ret)) == .error_union)
                     zig_ret catch |err| {
                         if (err != pyu.PyErr.PyErr) {
                             pyu.raise(.Exception, "Zig function returned an error: {any}", .{err}) catch {};
@@ -132,5 +132,5 @@ fn init() callconv(.C) ?*py.PyObject {
 }
 
 comptime {
-    @export(init, .{ .name = "PyInit_" ++ generated.module_name, .linkage = .strong });
+    @export(&init, .{ .name = "PyInit_" ++ generated.module_name, .linkage = .strong });
 }

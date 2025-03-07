@@ -14,17 +14,20 @@ _copy_paths = [
     Path(__file__).parent / "zig_ext.zig",
 ]
 
+custom_zig_binary = None
 
-_is_windows = platform.system() == "Windows"
+IS_WINDOWS = platform.system() == "Windows"
+
 
 def link_or_copy(src: Path, tgt: Path, force_copy: bool) -> None:
-    if _is_windows or force_copy:
+    if IS_WINDOWS or force_copy:
         if src.is_file():
             copyfile(src, tgt)
         else:
             copytree(src, tgt)
     else:
         tgt.symlink_to(src)
+
 
 def _escape(path: str) -> str:
     return path.replace("\\", "\\\\")
@@ -88,31 +91,46 @@ def compile_to(
         temppath_inner = temppath / "inner"
         if directory is not None:
             temppath_inner.rmdir()
-            link_or_copy(Path(directory).absolute(), temppath_inner, force_copy=False)
+            link_or_copy(
+                Path(directory).absolute(),
+                temppath_inner,
+                force_copy=False,
+            )
         elif file is not None:
-            link_or_copy(Path(file).absolute(), temppath_inner / "import_fns.zig", force_copy=False)
+            link_or_copy(
+                Path(file).absolute(),
+                temppath_inner / "import_fns.zig",
+                force_copy=False,
+            )
         else:
             assert source_code is not None
             with (temppath_inner / "import_fns.zig").open("w", encoding="utf-8") as f:
                 f.write(source_code)
 
         args = [
-            sys.executable,
-            "-m",
-            "ziglang",
+            *(
+                [custom_zig_binary]
+                if custom_zig_binary is not None
+                else [
+                    sys.executable,
+                    "-m",
+                    "ziglang",
+                ]
+            ),
             "build",
-            *(["-Dtarget=x86_64-windows"] if _is_windows else []),
+            *(["-Dtarget=x86_64-windows"] if IS_WINDOWS else []),
         ]
         subprocess.run(args, cwd=tempdir, check=True)
 
         (binary,) = (
             p
-            for p in (temppath / "zig-out").glob(f"**/*{'.dll' if _is_windows else ''}")
+            for p in (temppath / "zig-out").glob(f"**/*{'.dll' if IS_WINDOWS else ''}")
             if p.is_file()
         )
 
-        binary.rename(
-            Path(target_dir) / (module_name + sysconfig.get_config_var("EXT_SUFFIX"))
+        copyfile(
+            binary,
+            Path(target_dir) / (module_name + sysconfig.get_config_var("EXT_SUFFIX")),
         )
 
 
