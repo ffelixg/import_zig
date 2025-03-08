@@ -33,13 +33,15 @@ def _escape(path: str) -> str:
     return path.replace("\\", "\\\\")
 
 
-def prepare(path: str | Path, module_name: str, force_copy: bool = True) -> None:
+def prepare(path: str | Path, module_name: str, force_copy: bool = True, imports: dict[str, str | Path] | None = None) -> None:
     """
     Link/Create files at path needed to compile the Zig code
 
     In order to get ZLS support for the Python C API, you can execute this and
     develop inside the "inner" directory.
     """
+    if imports is None:
+        imports = {}
     path = Path(path)
     if not path.exists():
         path.mkdir()
@@ -63,6 +65,26 @@ def prepare(path: str | Path, module_name: str, force_copy: bool = True) -> None
             + "".join(f'    "{p}",\n' for p in map(_escape, lib_paths))
             + "};\n"
             + f'pub const module_name = "{module_name}";\n'
+            + f"pub const imports: [{len(imports)}][]const u8 = .{{\n"
+            + "".join(f'    "{p}",\n' for p in imports.keys())
+            + "};\n"
+        )
+
+    for name, import_path in imports.items():
+        import_path = Path(import_path)
+        link_or_copy(import_path, path / name, force_copy)
+
+    with (path / "build.zig.zon").open("w", encoding="utf-8") as f:
+        f.write(
+            '.{\n'
+            + '    .name = .zig_ext,\n'
+            + '    .fingerprint = 0xbc61f5306128b76b,\n'
+            + '    .version = "0.0.0",\n'
+            + '    .dependencies = .{\n'
+            + ''.join(f'        .{name} = .{{.path="{name}"}},\n' for name in imports)
+            + '    },\n'
+            + '    .paths = .{"build.zig", "build.zig.zon", "src"},\n'
+            + '}\n'
         )
 
 
@@ -72,6 +94,7 @@ def compile_to(
     source_code: str | None = None,
     file: Path | str | None = None,
     directory: Path | str | None = None,
+    imports: dict[str, str | Path] | None = None,
 ):
     """
     Same as import_zig, except that the module will not be imported an instead
@@ -86,7 +109,7 @@ def compile_to(
 
     with TemporaryDirectory(prefix="import_zig_compile_") as tempdir:
         temppath = Path(tempdir)
-        prepare(temppath, module_name, force_copy=False)
+        prepare(temppath, module_name, force_copy=False, imports=imports)
 
         temppath_inner = temppath / "inner"
         if directory is not None:
@@ -139,6 +162,7 @@ def import_zig(
     source_code: str | None = None,
     file: Path | str | None = None,
     directory: Path | str | None = None,
+    imports: dict[str, str | Path] | None = None,
 ):
     """
     This function takes in Zig code, wraps it in the Python C API, compiles the
@@ -177,6 +201,7 @@ def import_zig(
             file=file,
             directory=directory,
             module_name=module_name,
+            imports=imports,
         )
         sys.path.append(tempdir)
         try:
