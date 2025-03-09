@@ -24,8 +24,10 @@ def link_or_copy(src: Path, tgt: Path, force_copy: bool) -> None:
         if src.is_file():
             copyfile(src, tgt)
         else:
-            copytree(src, tgt)
+            copytree(src, tgt, ignore=lambda *_: [".git", ".zig-cache", "zig-out"], dirs_exist_ok=True)
     else:
+        if tgt.exists():
+            tgt.unlink()
         tgt.symlink_to(src)
 
 
@@ -43,13 +45,12 @@ def prepare(path: str | Path, module_name: str, force_copy: bool = True, imports
     if imports is None:
         imports = {}
     path = Path(path)
-    if not path.exists():
-        path.mkdir()
+    path.mkdir(exist_ok=True)
 
     for src in _copy_paths:
         link_or_copy(src, path / src.name, force_copy)
 
-    (path / "inner").mkdir()
+    (path / "inner").mkdir(exist_ok=True)
 
     include_dirs = [sysconfig.get_path("include")]
     lib_paths = [
