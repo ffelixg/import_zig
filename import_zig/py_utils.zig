@@ -5,9 +5,6 @@ pub const py = @cImport({
     @cInclude("Python.h");
 });
 
-var gpa = std.heap.GeneralPurposeAllocator(.{ .safety = true }){};
-pub const gp_allocator = gpa.allocator();
-
 pub const PyErr = error.PyErr;
 const Exceptions = enum { Exception, NotImplemented, TypeError, ValueError };
 
@@ -19,8 +16,8 @@ pub fn raise(exc: Exceptions, comptime msg: []const u8, args: anytype) error{PyE
         .TypeError => py.PyExc_TypeError,
         .ValueError => py.PyExc_ValueError,
     };
-    const formatted = std.fmt.allocPrintZ(gp_allocator, msg, args) catch "Error formatting error message";
-    defer gp_allocator.free(formatted);
+    const formatted = std.fmt.allocPrintZ(std.heap.raw_c_allocator, msg, args) catch "Error formatting error message";
+    defer std.heap.raw_c_allocator.free(formatted);
 
     // new in Python 3.12, for older versions we just overwrite exceptions.
     if (@hasField(py, "PyErr_GetRaisedException")) {
@@ -76,7 +73,7 @@ fn toPyList(value: anytype) !*py.PyObject {
     return pylist;
 }
 
-var struct_tuple_map = std.StringHashMap(?*py.PyTypeObject).init(gp_allocator);
+var struct_tuple_map = std.StringHashMap(?*py.PyTypeObject).init(std.heap.raw_c_allocator);
 
 /// Steals a reference when passed PyObjects
 pub fn zig_to_py(value: anytype) !*py.PyObject {
