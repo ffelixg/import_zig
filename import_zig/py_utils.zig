@@ -37,6 +37,32 @@ pub fn raise(exc: Exceptions, comptime msg: []const u8, args: anytype) error{PyE
     return PyErr;
 }
 
+pub fn PyCapsule(T: type, name: [*c]const u8, deinit: ?*const fn (*T) callconv(.c) void) type {
+    return struct {
+        fn py_free(capsule: ?*py.PyObject) callconv(.c) void {
+            const ptr = read_capsule(capsule orelse unreachable) catch unreachable;
+            defer std.heap.raw_c_allocator.destroy(ptr);
+            if (deinit != null) deinit.?(ptr);
+        }
+        pub fn read_capsule(capsule: *py.PyObject) !*T {
+            return @alignCast(@ptrCast(py.PyCapsule_GetPointer(capsule, name) orelse return PyErr));
+        }
+        pub fn create_capsule(data: T) !*py.PyObject {
+            const ptr = std.heap.raw_c_allocator.create(T) catch {
+                _ = py.PyErr_NoMemory();
+                return PyErr;
+            };
+            ptr.* = data;
+            std.debug.print("created {any}\n", .{ptr});
+            return py.PyCapsule_New(
+                @ptrCast(ptr),
+                name,
+                &py_free,
+            ) orelse return PyErr;
+        }
+    };
+}
+
 fn toPyList(value: anytype) !*py.PyObject {
     const pylist = py.PyList_New(@intCast(value.len)) orelse return PyErr;
     errdefer py.Py_DECREF(pylist);
