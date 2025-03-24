@@ -50,7 +50,6 @@ pub fn PyCapsule(T: type, name: [*c]const u8, deinit: ?*const fn (*T) callconv(.
                 return PyErr;
             };
             ptr.* = data;
-            std.debug.print("created {any}\n", .{ptr});
             return py.PyCapsule_New(
                 @ptrCast(ptr),
                 name,
