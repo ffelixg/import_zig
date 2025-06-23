@@ -1,9 +1,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const generated = @import("generated.zig");
-const pyu = @import("py_utils.zig");
+const pyu = @import("py");
 const py = pyu.py;
-const zig_file = @import("inner/import_fns.zig");
+const zig_file = @import("src");
 
 fn list_to_arr(T: type, list: *std.SinglyLinkedList(T)) [list.len()]T {
     var arr: [list.len()]T = undefined;

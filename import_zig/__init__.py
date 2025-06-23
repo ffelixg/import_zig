@@ -44,12 +44,13 @@ def prepare(path: str | Path, module_name: str, force_copy: bool = True, imports
     if imports is None:
         imports = {}
     path = Path(path)
+    if not path.is_dir():
+        raise FileNotFoundError(f"No such directory: {path}")
+    path = path / "import_zig"
     path.mkdir(exist_ok=True)
 
     for src in _copy_paths:
         link_or_copy(src, path / src.name, force_copy)
-
-    (path / "inner").mkdir(exist_ok=True)
 
     include_dirs = [sysconfig.get_path("include")]
     lib_paths = [
@@ -111,23 +112,21 @@ def compile_to(
         temppath = Path(tempdir)
         prepare(temppath, module_name, force_copy=False, imports=imports)
 
-        temppath_inner = temppath / "inner"
         if directory is not None:
-            temppath_inner.rmdir()
             link_or_copy(
                 Path(directory).absolute(),
-                temppath_inner,
-                force_copy=False,
+                temppath,
+                force_copy=True,
             )
         elif file is not None:
             link_or_copy(
                 Path(file).absolute(),
-                temppath_inner / "import_fns.zig",
+                temppath / "import_fns.zig",
                 force_copy=False,
             )
         else:
             assert source_code is not None
-            with (temppath_inner / "import_fns.zig").open("w", encoding="utf-8") as f:
+            with (temppath / "import_fns.zig").open("w", encoding="utf-8") as f:
                 f.write(source_code)
 
         args = [
@@ -143,11 +142,11 @@ def compile_to(
             "build",
             *(["-Dtarget=x86_64-windows"] if IS_WINDOWS else []),
         ]
-        subprocess.run(args, cwd=tempdir, check=True)
+        subprocess.run(args, cwd=temppath / "import_zig", check=True)
 
         (binary,) = (
             p
-            for p in (temppath / "zig-out").glob(f"**/*{'.dll' if IS_WINDOWS else ''}")
+            for p in (temppath / "import_zig" / "zig-out").glob(f"**/*{'.dll' if IS_WINDOWS else ''}")
             if p.is_file()
         )
 

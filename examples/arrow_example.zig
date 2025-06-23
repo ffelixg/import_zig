@@ -1,7 +1,7 @@
 /// This example is using the arrow C data interface, which is documented at
 /// https://arrow.apache.org/docs/format/CDataInterface.html
 const std = @import("std");
-const pyu = @import("../py_utils.zig");
+const pyu = @import("py");
 const py = pyu.py;
 
 // Arrow moves the data buffers from producers to
