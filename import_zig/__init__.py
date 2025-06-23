@@ -26,8 +26,7 @@ def link_or_copy(src: Path, tgt: Path, force_copy: bool) -> None:
         else:
             copytree(src, tgt, ignore=lambda *_: [".git", ".zig-cache", "zig-out"], dirs_exist_ok=True)
     else:
-        if tgt.exists():
-            tgt.unlink()
+        tgt.unlink(missing_ok=True)
         tgt.symlink_to(src)
 
 
@@ -72,7 +71,7 @@ def prepare(path: str | Path, module_name: str, force_copy: bool = True, imports
         )
 
     for name, import_path in imports.items():
-        import_path = Path(import_path)
+        import_path = Path(import_path).absolute()
         link_or_copy(import_path, path / name, force_copy)
 
     with (path / "build.zig.zon").open("w", encoding="utf-8") as f:
