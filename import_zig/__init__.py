@@ -12,6 +12,7 @@ _copy_paths = [
     Path(__file__).parent / "build.zig",
     Path(__file__).parent / "py_utils.zig",
     Path(__file__).parent / "zig_ext.zig",
+    Path(__file__).parent / "c.h",
 ]
 
 custom_zig_binary = None

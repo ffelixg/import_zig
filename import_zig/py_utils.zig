@@ -1,9 +1,5 @@
 const std = @import("std");
-pub const py = @cImport({
-    @cDefine("Py_LIMITED_API", "0x030a00f0");
-    @cDefine("PY_SSIZE_T_CLEAN", {});
-    @cInclude("Python.h");
-});
+pub const py = @import("c");
 
 pub const PyErr = error.PyErr;
 const Exceptions = enum { Exception, NotImplemented, TypeError, ValueError };
