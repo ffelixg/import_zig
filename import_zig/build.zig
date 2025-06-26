@@ -1,5 +1,5 @@
 const std = @import("std");
-const generated = @import("generated.zig");
+const generated = @import("zig_ext/generated.zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     const c_tran = b.addTranslateC(.{
         .target = target,
         .optimize = optimize,
-        .root_source_file = b.path("c.h"),
+        .root_source_file = b.path("zig_ext/c.h"),
     });
     inline for (generated.include) |path| {
         c_tran.addIncludePath(.{ .cwd_relative = path });
@@ -22,8 +22,15 @@ pub fn build(b: *std.Build) void {
         c_mod.linkSystemLibrary("python3", .{});
     }
 
+    const py_mod = b.addModule("py", .{
+        .root_source_file = b.path("zig_ext/py_utils.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    py_mod.addImport("c", c_mod);
+
     const src = b.createModule(.{
-        .root_source_file = b.path("../import_fns.zig"),
+        .root_source_file = b.path(generated.module_name ++ ".zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -35,13 +42,15 @@ pub fn build(b: *std.Build) void {
         src.addImport(name, dep.module(name));
     }
     src.addImport("c", c_mod);
+    src.addImport("py", py_mod);
 
     const mod = b.createModule(.{
-        .root_source_file = b.path("zig_ext.zig"),
+        .root_source_file = b.path("zig_ext/zig_ext.zig"),
         .target = target,
         .optimize = optimize,
     });
     mod.addImport("c", c_mod);
+    mod.addImport("py", py_mod);
     mod.addImport("src", src);
 
     const lib = b.addSharedLibrary(.{

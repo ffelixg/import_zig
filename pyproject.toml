@@ -25,4 +25,4 @@ Issues = "https://github.com/ffelixg/import_zig/issues"
 [tool.setuptools]
 py-modules = ["import_zig"]
 packages = ["import_zig"]
-package-data = {import_zig = ["*.zig", "*.h"]}
+package-data = {import_zig = ["build.zig", "zig_ext/py_utils.zig", "zig_ext/zig_ext.zig", "zig_ext/c.h"]}

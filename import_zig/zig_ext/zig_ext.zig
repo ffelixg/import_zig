@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const generated = @import("generated.zig");
-const pyu = @import("py_utils.zig");
+const pyu = @import("py");
 const py = pyu.py;
 const zig_file = @import("src");
 

@@ -8,11 +8,11 @@ import subprocess
 import random
 import platform
 
-_copy_paths = [
-    Path(__file__).parent / "build.zig",
-    Path(__file__).parent / "py_utils.zig",
-    Path(__file__).parent / "zig_ext.zig",
-    Path(__file__).parent / "c.h",
+_copy_files = [
+    Path() / "build.zig",
+    Path() / "zig_ext" / "py_utils.zig",
+    Path() / "zig_ext" / "zig_ext.zig",
+    Path() / "zig_ext" / "c.h",
 ]
 
 custom_zig_binary = None
@@ -25,7 +25,12 @@ def link_or_copy(src: Path, tgt: Path, force_copy: bool) -> None:
         if src.is_file():
             copyfile(src, tgt)
         else:
-            copytree(src, tgt, ignore=lambda *_: [".git", ".zig-cache", "zig-out"], dirs_exist_ok=True)
+            copytree(
+                src,
+                tgt,
+                ignore=lambda *_: [".git", ".zig-cache", "zig-out"],
+                dirs_exist_ok=True,
+            )
     else:
         tgt.unlink(missing_ok=True)
         tgt.symlink_to(src)
@@ -35,7 +40,12 @@ def _escape(path: str) -> str:
     return path.replace("\\", "\\\\")
 
 
-def prepare(path: str | Path, module_name: str, force_copy: bool = True, imports: dict[str, str | Path] | None = None) -> None:
+def prepare(
+    path: str | Path,
+    module_name: str,
+    force_copy: bool = True,
+    imports: dict[str, str | Path] | None = None,
+) -> None:
     """
     Link/Create files at path needed to compile the Zig code
 
@@ -47,18 +57,17 @@ def prepare(path: str | Path, module_name: str, force_copy: bool = True, imports
     path = Path(path)
     if not path.is_dir():
         raise FileNotFoundError(f"No such directory: {path}")
-    path = path / "import_zig"
-    path.mkdir(exist_ok=True)
+    (path / "zig_ext").mkdir(exist_ok=True)
 
-    for src in _copy_paths:
-        link_or_copy(src, path / src.name, force_copy)
+    for fp in _copy_files:
+        link_or_copy(Path(__file__).parent / fp, path / fp, force_copy)
 
     include_dirs = [sysconfig.get_path("include")]
     lib_paths = [
         str(Path(sysconfig.get_config_var("installed_base"), "Libs").absolute())
     ]
 
-    with (path / "generated.zig").open("w", encoding="utf-8") as f:
+    with (path / "zig_ext" / "generated.zig").open("w", encoding="utf-8") as f:
         f.write(
             f"pub const include: [{len(include_dirs)}][]const u8 = .{{\n"
             + "".join(f'    "{p}",\n' for p in map(_escape, include_dirs))
@@ -74,25 +83,27 @@ def prepare(path: str | Path, module_name: str, force_copy: bool = True, imports
 
     for name, import_path in imports.items():
         import_path = Path(import_path).absolute()
-        link_or_copy(import_path, path / name, force_copy)
+        link_or_copy(import_path, path / "zig_ext" / name, force_copy)
 
     with (path / "build.zig.zon").open("w", encoding="utf-8") as f:
         f.write(
-            '.{\n'
-            + '    .name = .zig_ext,\n'
-            + '    .fingerprint = 0xbc61f5306128b76b,\n'
+            ".{\n"
+            + "    .name = .zig_ext,\n"
+            + "    .fingerprint = 0xbc61f5306128b76b,\n"
             + '    .version = "0.0.0",\n'
-            + '    .dependencies = .{\n'
-            + ''.join(f'        .{name} = .{{.path="{name}"}},\n' for name in imports)
-            + '    },\n'
-            + '    .paths = .{"build.zig", "build.zig.zon", "src"},\n'
-            + '}\n'
+            + "    .dependencies = .{\n"
+            + "".join(
+                f'        .{name} = .{{.path="zig_ext/{name}"}},\n' for name in imports
+            )
+            + "    },\n"
+            + '    .paths = .{"build.zig", "build.zig.zon", "zig_ext"},\n'
+            + "}\n"
         )
 
 
 def compile_to(
     target_dir: str | Path,
-    module_name: str = "zig_ext",
+    module_name: str | None = None,
     source_code: str | None = None,
     file: Path | str | None = None,
     directory: Path | str | None = None,
@@ -104,6 +115,12 @@ def compile_to(
 
     Further, `module_name` is not randomized.
     """
+    if module_name is None:
+        if file is not None:
+            module_name = Path(file).name.removesuffix(".zig")
+        else:
+            module_name = "zig_ext"
+
     if (source_code is not None) + (file is not None) + (directory is not None) != 1:
         raise Exception(
             "Exactly one method must be used to specify location of Zig file(s)."
@@ -114,20 +131,30 @@ def compile_to(
         prepare(temppath, module_name, force_copy=False, imports=imports)
 
         if directory is not None:
+            p = Path(directory).absolute()
+            if not any(f"{module_name}.zig" == f.name for f in p.iterdir()):
+                raise FileNotFoundError(
+                    f"{module_name=}, so Directory {p} must contain {module_name}.zig"
+                )
             link_or_copy(
-                Path(directory).absolute(),
+                p,
                 temppath,
                 force_copy=True,
             )
         elif file is not None:
+            p = Path(file).absolute()
+            if p.name != f"{module_name}.zig":
+                raise FileNotFoundError(
+                    f"{module_name=}, so file {p} must be named {module_name}.zig"
+                )
             link_or_copy(
-                Path(file).absolute(),
-                temppath / "import_fns.zig",
+                p,
+                temppath / f"{module_name}.zig",
                 force_copy=False,
             )
         else:
             assert source_code is not None
-            with (temppath / "import_fns.zig").open("w", encoding="utf-8") as f:
+            with (temppath / f"{module_name}.zig").open("w", encoding="utf-8") as f:
                 f.write(source_code)
 
         args = [
@@ -143,11 +170,11 @@ def compile_to(
             "build",
             *(["-Dtarget=x86_64-windows"] if IS_WINDOWS else []),
         ]
-        subprocess.run(args, cwd=temppath / "import_zig", check=True)
+        subprocess.run(args, cwd=temppath, check=True)
 
         (binary,) = (
             p
-            for p in (temppath / "import_zig" / "zig-out").glob(f"**/*{'.dll' if IS_WINDOWS else ''}")
+            for p in (temppath / "zig-out").glob(f"**/*{'.dll' if IS_WINDOWS else ''}")
             if p.is_file()
         )
 
@@ -188,7 +215,10 @@ def import_zig(
     If module_name is left blank, a random name will be assigned.
     """
     if module_name is None:
-        module_name = f"zig_ext_{hex(random.randint(0, 2**128))[2:]}"
+        if file is not None:
+            module_name = Path(file).name.removesuffix(".zig")
+        else:
+            module_name = f"zig_ext_{hex(random.randint(0, 2**128))[2:]}"
 
     # For some reason the binary can't be deleted on windows, so it will live on
     # due to ignore_cleanup_errors. Hopefully the OS takes care of it eventually.
