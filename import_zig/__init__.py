@@ -81,6 +81,9 @@ def prepare(
             + "};\n"
         )
 
+    with (path / "zig_ext" / ".gitignore").open("w", encoding="utf-8") as f:
+        f.write("*\n")
+
     for name, import_path in imports.items():
         import_path = Path(import_path).absolute()
         link_or_copy(import_path, path / "zig_ext" / name, force_copy)
@@ -157,31 +160,41 @@ def compile_to(
             with (temppath / f"{module_name}.zig").open("w", encoding="utf-8") as f:
                 f.write(source_code)
 
-        args = [
-            *(
-                [custom_zig_binary]
-                if custom_zig_binary is not None
-                else [
-                    sys.executable,
-                    "-m",
-                    "ziglang",
-                ]
-            ),
-            "build",
-            *(["-Dtarget=x86_64-windows"] if IS_WINDOWS else []),
-        ]
-        subprocess.run(args, cwd=temppath, check=True)
+        compile_prepared(target_dir, module_name, temppath)
 
-        (binary,) = (
-            p
-            for p in (temppath / "zig-out").glob(f"**/*{'.dll' if IS_WINDOWS else ''}")
-            if p.is_file()
-        )
 
-        copyfile(
-            binary,
-            Path(target_dir) / (module_name + sysconfig.get_config_var("EXT_SUFFIX")),
-        )
+def compile_prepared(
+    target_dir: str | Path,
+    module_name: str,
+    cwd: str | Path,
+):
+    target_dir = Path(target_dir)
+    cwd = Path(cwd)
+    args = [
+        *(
+            [custom_zig_binary]
+            if custom_zig_binary is not None
+            else [
+                sys.executable,
+                "-m",
+                "ziglang",
+            ]
+        ),
+        "build",
+        *(["-Dtarget=x86_64-windows"] if IS_WINDOWS else []),
+    ]
+    subprocess.run(args, cwd=cwd, check=True)
+
+    (binary,) = (
+        p
+        for p in (cwd / "zig-out").glob(f"**/*{'.dll' if IS_WINDOWS else ''}")
+        if p.is_file()
+    )
+
+    copyfile(
+        binary,
+        Path(target_dir) / (module_name + sysconfig.get_config_var("EXT_SUFFIX")),
+    )
 
 
 def import_zig(
