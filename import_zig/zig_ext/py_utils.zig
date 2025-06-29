@@ -1,5 +1,6 @@
 const std = @import("std");
 pub const py = @import("c");
+pub const module_name = @import("generated.zig").module_name;
 
 pub const PyErr = error.PyErr;
 const Exceptions = enum { Exception, NotImplemented, TypeError, ValueError };
@@ -126,7 +127,7 @@ pub fn zig_to_py(value: anytype) !*py.PyObject {
                             while (tokenizer.next()) |token| {
                                 name = token;
                             }
-                            break :name "import_zig." ++ name ++ "";
+                            break :name module_name ++ "." ++ name ++ "";
                         },
                         .fields = &fields,
                     };

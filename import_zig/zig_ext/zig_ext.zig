@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const generated = @import("generated.zig");
 const pyu = @import("py");
 const py = pyu.py;
 const zig_file = @import("src");
@@ -132,5 +131,5 @@ fn init() callconv(.C) ?*py.PyObject {
 }
 
 comptime {
-    @export(&init, .{ .name = "PyInit_" ++ generated.module_name, .linkage = .strong });
+    @export(&init, .{ .name = "PyInit_" ++ pyu.module_name, .linkage = .strong });
 }
