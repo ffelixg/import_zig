@@ -147,6 +147,7 @@ pub fn zig_to_py(value: anytype) !*py.PyObject {
                 break :blk tuple;
             }
         },
+        .null => py.Py_NewRef(py.Py_None()),
         else => |info| {
             @compileLog("unsupported py-type conversion", info);
             comptime unreachable;
@@ -287,8 +288,13 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
                 return zig_value;
             }
         },
+        .@"enum" => |info| {
+            return std.meta.intToEnum(
+                zig_type,
+                try py_to_zig(info.tag_type, py_value, allocator),
+            ) catch raise(.ValueError, "Expected value to fit into enum {s}", .{@typeName(zig_type)});
+        },
         else => {},
     }
-    @compileLog("Unsupported conversion from py to zig", @typeInfo(zig_type));
-    comptime unreachable;
+    @compileError("Unsupported conversion from py to zig " ++ @typeName(zig_type));
 }
