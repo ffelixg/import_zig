@@ -44,7 +44,7 @@ def prepare(
     path: str | Path,
     module_name: str,
     force_copy: bool = True,
-    imports: dict[str, str | Path] | None = None,
+    imports: dict[str, dict[str, str | Path]] | None = None,
 ) -> None:
     """
     Link/Create files at path needed to compile the Zig code
@@ -84,9 +84,12 @@ def prepare(
     with (path / "zig_ext" / ".gitignore").open("w", encoding="utf-8") as f:
         f.write("*\n")
 
-    for name, import_path in imports.items():
-        import_path = Path(import_path).absolute()
-        link_or_copy(import_path, path / "zig_ext" / name, force_copy)
+    for name, import_spec in imports.items():
+        if "path" in import_spec:
+            import_path = import_spec["path"]
+            import_path = Path(import_path).absolute()
+            link_or_copy(import_path, path / "zig_ext" / name, force_copy)
+            import_spec["path"] = f"zig_ext/{name}"
 
     with (path / "build.zig.zon").open("w", encoding="utf-8") as f:
         f.write(
@@ -96,7 +99,14 @@ def prepare(
             + '    .version = "0.0.0",\n'
             + "    .dependencies = .{\n"
             + "".join(
-                f'        .{name} = .{{.path="zig_ext/{name}"}},\n' for name in imports
+                f'        .{name} = .{{\n'
+                + "".join(
+                    f'            .{key} = "{val}",\n'
+                    for key, val in import_spec.items()
+                )
+                + '        },\n'
+        
+                for name, import_spec in imports.items()
             )
             + "    },\n"
             + '    .paths = .{"build.zig", "build.zig.zon", "zig_ext"},\n'
@@ -110,7 +120,7 @@ def compile_to(
     source_code: str | None = None,
     file: Path | str | None = None,
     directory: Path | str | None = None,
-    imports: dict[str, str | Path] | None = None,
+    imports: dict[str, dict[str, str | Path]] | None = None,
 ):
     """
     Same as import_zig, except that the module will not be imported an instead
@@ -202,7 +212,7 @@ def import_zig(
     source_code: str | None = None,
     file: Path | str | None = None,
     directory: Path | str | None = None,
-    imports: dict[str, str | Path] | None = None,
+    imports: dict[str, dict[str, str | Path]] | None = None,
 ):
     """
     This function takes in Zig code, wraps it in the Python C API, compiles the
