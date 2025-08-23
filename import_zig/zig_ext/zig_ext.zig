@@ -69,7 +69,7 @@ var zig_ext_methods = blk: {
                 const zig_ret_unwrapped = if (@typeInfo(@TypeOf(zig_ret)) == .error_union)
                     zig_ret catch |err| {
                         if (err != pyu.PyErr) {
-                            pyu.raise(.Exception, "Zig function returned an error: {any}", .{err}) catch {};
+                            pyu.raise(.Exception, "{s}", .{@errorName(err)}) catch {};
                         }
                         return null;
                     }
