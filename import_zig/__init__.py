@@ -7,6 +7,7 @@ import sys
 import subprocess
 import random
 import platform
+from enum import Enum
 
 _copy_files = [
     Path() / "build.zig",
@@ -18,6 +19,12 @@ _copy_files = [
 custom_zig_binary = None
 
 IS_WINDOWS = platform.system() == "Windows"
+
+class Optimize(Enum):
+    Debug = "Debug"
+    ReleaseSafe = "ReleaseSafe"
+    ReleaseFast = "ReleaseFast"
+    ReleaseSmall = "ReleaseSmall"
 
 
 def link_or_copy(src: Path, tgt: Path, force_copy: bool) -> None:
@@ -121,6 +128,7 @@ def compile_to(
     file: Path | str | None = None,
     directory: Path | str | None = None,
     imports: dict[str, dict[str, str | Path]] | None = None,
+    optimize: Optimize = Optimize.Debug,
 ):
     """
     Same as import_zig, except that the module will not be imported an instead
@@ -170,13 +178,14 @@ def compile_to(
             with (temppath / f"{module_name}.zig").open("w", encoding="utf-8") as f:
                 f.write(source_code)
 
-        compile_prepared(target_dir, module_name, temppath)
+        compile_prepared(target_dir, module_name, temppath, optimize=optimize)
 
 
 def compile_prepared(
     target_dir: str | Path,
     module_name: str,
     cwd: str | Path,
+    optimize: Optimize = Optimize.Debug,
 ):
     target_dir = Path(target_dir)
     cwd = Path(cwd)
@@ -192,6 +201,7 @@ def compile_prepared(
         ),
         "build",
         *(["-Dtarget=x86_64-windows"] if IS_WINDOWS else []),
+        f"-Doptimize={optimize.name}",
     ]
     subprocess.run(args, cwd=cwd, check=True)
 
@@ -213,6 +223,7 @@ def import_zig(
     file: Path | str | None = None,
     directory: Path | str | None = None,
     imports: dict[str, dict[str, str | Path]] | None = None,
+    optimize: Optimize = Optimize.Debug,
 ):
     """
     This function takes in Zig code, wraps it in the Python C API, compiles the
@@ -255,6 +266,7 @@ def import_zig(
             directory=directory,
             module_name=module_name,
             imports=imports,
+            optimize=optimize,
         )
         sys.path.append(tempdir)
         try:

@@ -3,7 +3,7 @@ const generated = @import("zig_ext/generated.zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .Debug });
+    const optimize = b.standardOptimizeOption(.{});
 
     const c_tran = b.addTranslateC(.{
         .target = target,
