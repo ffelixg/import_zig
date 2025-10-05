@@ -8,6 +8,12 @@ import subprocess
 import random
 import platform
 from enum import Enum
+import re
+import typing
+
+class DirectoryImport(typing.TypedDict):
+    path: str | Path
+    root_source_file: str
 
 _copy_files = [
     Path() / "build.zig",
@@ -31,13 +37,16 @@ def link_or_copy(src: Path, tgt: Path, force_copy: bool) -> None:
     if IS_WINDOWS or force_copy:
         if src.is_file():
             copyfile(src, tgt)
-        else:
+        elif src.is_dir():
             copytree(
                 src,
                 tgt,
                 ignore=lambda *_: [".git", ".zig-cache", "zig-out"],
                 dirs_exist_ok=True,
             )
+        else:
+            assert not src.exists(), src
+            raise FileNotFoundError(f"No such file or directory: {src}")
     else:
         tgt.unlink(missing_ok=True)
         tgt.symlink_to(src)
@@ -50,6 +59,7 @@ def _escape(path: str) -> str:
 def prepare(
     path: str | Path,
     module_name: str,
+    root_source_file: str,
     force_copy: bool = True,
     imports: dict[str, dict[str, str | Path]] | None = None,
 ) -> None:
@@ -83,6 +93,7 @@ def prepare(
             + "".join(f'    "{p}",\n' for p in map(_escape, lib_paths))
             + "};\n"
             + f'pub const module_name = "{module_name}";\n'
+            + f'pub const root_source_file = "{root_source_file}";\n'
             + f"pub const imports: [{len(imports)}][]const u8 = .{{\n"
             + "".join(f'    "{p}",\n' for p in imports.keys())
             + "};\n"
@@ -123,10 +134,10 @@ def prepare(
 
 def compile_to(
     target_dir: str | Path,
-    module_name: str | None = None,
+    module_name: str,
     source_code: str | None = None,
     file: Path | str | None = None,
-    directory: Path | str | None = None,
+    directory: DirectoryImport = None,
     imports: dict[str, dict[str, str | Path]] | None = None,
     optimize: Optimize = Optimize.Debug,
 ):
@@ -136,11 +147,8 @@ def compile_to(
 
     Further, `module_name` is not randomized.
     """
-    if module_name is None:
-        if file is not None:
-            module_name = Path(file).name.removesuffix(".zig")
-        else:
-            module_name = "zig_ext"
+    if not module_name:
+        raise Exception("module_name must be specified")
 
     if (source_code is not None) + (file is not None) + (directory is not None) != 1:
         raise Exception(
@@ -149,13 +157,23 @@ def compile_to(
 
     with TemporaryDirectory(prefix="import_zig_compile_") as tempdir:
         temppath = Path(tempdir)
-        prepare(temppath, module_name, force_copy=False, imports=imports)
+        if directory is not None:
+            root_source_file = directory["root_source_file"]
+            assert Path(directory["path"]).is_dir(), directory
+            assert (Path(directory["path"]) / root_source_file).is_file(), directory
+        elif file is not None:
+            assert Path(file).is_file(), file
+            root_source_file = Path(file).name
+        else:
+            assert source_code is not None
+            root_source_file = "import_fns.zig"
+        prepare(temppath, module_name, root_source_file, force_copy=False, imports=imports)
 
         if directory is not None:
-            p = Path(directory).absolute()
-            if not any(f"{module_name}.zig" == f.name for f in p.iterdir()):
+            p = Path(directory["path"]).absolute()
+            if not any(directory['root_source_file'] == f.name for f in p.iterdir()):
                 raise FileNotFoundError(
-                    f"{module_name=}, so Directory {p} must contain {module_name}.zig"
+                    f"Directory {p} must contain {directory['root_source_file']}"
                 )
             link_or_copy(
                 p,
@@ -163,27 +181,20 @@ def compile_to(
                 force_copy=True,
             )
         elif file is not None:
-            p = Path(file).absolute()
-            if p.name != f"{module_name}.zig":
-                raise FileNotFoundError(
-                    f"{module_name=}, so file {p} must be named {module_name}.zig"
-                )
             link_or_copy(
-                p,
-                temppath / f"{module_name}.zig",
+                Path(file).absolute(),
+                temppath / root_source_file,
                 force_copy=False,
             )
         else:
-            assert source_code is not None
-            with (temppath / f"{module_name}.zig").open("w", encoding="utf-8") as f:
+            with (temppath / root_source_file).open("w", encoding="utf-8") as f:
                 f.write(source_code)
 
-        compile_prepared(target_dir, module_name, temppath, optimize=optimize)
+        compile_prepared(target_dir, temppath, optimize=optimize)
 
 
 def compile_prepared(
     target_dir: str | Path,
-    module_name: str,
     cwd: str | Path,
     optimize: Optimize = Optimize.Debug,
 ):
@@ -211,6 +222,12 @@ def compile_prepared(
         if p.is_file()
     )
 
+    with (cwd / "zig_ext" / "generated.zig").open("r", encoding="utf-8") as f:
+        generated_content = f.read()
+        m = re.search(r'pub const module_name = "(.*?)";', generated_content)
+        assert m, generated_content
+        module_name = m.group(1)
+
     copyfile(
         binary,
         Path(target_dir) / (module_name + sysconfig.get_config_var("EXT_SUFFIX")),
@@ -221,7 +238,7 @@ def import_zig(
     module_name: str | None = None,
     source_code: str | None = None,
     file: Path | str | None = None,
-    directory: Path | str | None = None,
+    directory: DirectoryImport = None,
     imports: dict[str, dict[str, str | Path]] | None = None,
     optimize: Optimize = Optimize.Debug,
 ):
@@ -249,10 +266,7 @@ def import_zig(
     If module_name is left blank, a random name will be assigned.
     """
     if module_name is None:
-        if file is not None:
-            module_name = Path(file).name.removesuffix(".zig")
-        else:
-            module_name = f"zig_ext_{hex(random.randint(0, 2**128))[2:]}"
+        module_name = f"zig_ext_{hex(random.randint(0, 2**128))[2:]}"
 
     # For some reason the binary can't be deleted on windows, so it will live on
     # due to ignore_cleanup_errors. Hopefully the OS takes care of it eventually.

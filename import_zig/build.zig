@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) void {
     py_mod.addImport("c", c_mod);
 
     const src = b.createModule(.{
-        .root_source_file = b.path(generated.module_name ++ ".zig"),
+        .root_source_file = b.path(generated.root_source_file),
         .target = target,
         .optimize = optimize,
     });
