@@ -1,0 +1,6 @@
+**/.zig-cache
+**/zig-out
+**/__pycache__
+**/*.egg-info
+dist
+build
