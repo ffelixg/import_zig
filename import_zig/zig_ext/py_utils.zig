@@ -13,7 +13,7 @@ pub fn raise(exc: Exceptions, comptime msg: []const u8, args: anytype) error{PyE
         .TypeError => py.PyExc_TypeError,
         .ValueError => py.PyExc_ValueError,
     };
-    const formatted = std.fmt.allocPrintZ(std.heap.raw_c_allocator, msg, args) catch "Error formatting error message";
+    const formatted = std.fmt.allocPrintSentinel(std.heap.raw_c_allocator, msg, args, 0) catch "Error formatting error message";
     defer std.heap.raw_c_allocator.free(formatted);
 
     // new in Python 3.12, for older versions we just overwrite exceptions.
@@ -39,7 +39,7 @@ pub fn PyCapsule(T: type, name: [*c]const u8, deinit: ?*const fn (*T) callconv(.
             if (deinit != null) deinit.?(ptr);
         }
         pub fn read_capsule(capsule: *py.PyObject) !*T {
-            return @alignCast(@ptrCast(py.PyCapsule_GetPointer(capsule, name) orelse return PyErr));
+            return @ptrCast(@alignCast(py.PyCapsule_GetPointer(capsule, name) orelse return PyErr));
         }
         pub fn create_capsule(data: T) !*py.PyObject {
             const ptr = std.heap.raw_c_allocator.create(T) catch {

@@ -4,20 +4,25 @@ const pyu = @import("py");
 const py = pyu.py;
 const zig_file = @import("src");
 
-fn list_to_arr(T: type, list: *std.SinglyLinkedList(T)) [list.len()]T {
+const Node = struct {
+    node: std.SinglyLinkedList.Node,
+    data: py.PyMethodDef,
+};
+
+fn list_to_arr(T: type, list: *std.SinglyLinkedList) [list.len()]T {
     var arr: [list.len()]T = undefined;
     var idx: usize = list.len();
     while (list.popFirst()) |node| {
         idx -= 1;
-        arr[idx] = node.data;
+        const my_node: *Node = @fieldParentPtr("node", node);
+        arr[idx] = my_node.data;
     }
     std.debug.assert(idx == 0);
     return arr;
 }
 
 var zig_ext_methods = blk: {
-    var methods = std.SinglyLinkedList(py.PyMethodDef){ .first = null };
-    const methods_node = @TypeOf(methods).Node;
+    var methods = std.SinglyLinkedList{};
 
     for (@typeInfo(zig_file).@"struct".decls) |fn_decl| {
         const zig_func = @field(zig_file, fn_decl.name);
@@ -43,7 +48,7 @@ var zig_ext_methods = blk: {
         const n_py_args = if (i_allocator != -1) fn_info.params.len - 1 else fn_info.params.len;
 
         const wrapper = struct {
-            fn wrapper(_: ?*py.PyObject, py_args: [*]*py.PyObject, n_py_args_runtime: isize) callconv(.C) ?*py.PyObject {
+            fn wrapper(_: ?*py.PyObject, py_args: [*]*py.PyObject, n_py_args_runtime: isize) callconv(.c) ?*py.PyObject {
                 var arena = std.heap.ArenaAllocator.init(std.heap.raw_c_allocator);
                 defer arena.deinit();
                 const allocator = arena.allocator();
@@ -83,25 +88,27 @@ var zig_ext_methods = blk: {
             }
         }.wrapper;
 
-        var node = methods_node{
+        var my_node = Node{
             .data = py.PyMethodDef{
                 .ml_name = fn_decl.name,
                 .ml_meth = @ptrCast(&wrapper),
                 .ml_flags = py.METH_FASTCALL,
                 .ml_doc = null,
             },
+            .node = .{},
         };
-        methods.prepend(&node);
+        methods.prepend(&my_node.node);
     }
-    var node = methods_node{
+    var my_node = Node{
         .data = py.PyMethodDef{
             .ml_name = null,
             .ml_meth = null,
             .ml_flags = 0,
             .ml_doc = null,
         },
+        .node = .{},
     };
-    methods.prepend(&node);
+    methods.prepend(&my_node.node);
     break :blk list_to_arr(py.PyMethodDef, &methods);
 };
 
@@ -125,7 +132,7 @@ var zig_ext_module = py.PyModuleDef{
     .m_free = null,
 };
 
-fn init() callconv(.C) ?*py.PyObject {
+fn init() callconv(.c) ?*py.PyObject {
     const module = py.PyModule_Create(&zig_ext_module);
     return module;
 }

@@ -15,8 +15,8 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
 ]
-dependencies = ["ziglang==0.14"]
-version = "0.14.0"
+dependencies = ["ziglang==0.15.1"]
+version = "0.15.1"
 
 [project.urls]
 Homepage = "https://github.com/ffelixg/import_zig"
