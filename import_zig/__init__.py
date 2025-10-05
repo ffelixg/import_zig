@@ -33,7 +33,7 @@ class Optimize(Enum):
     ReleaseSmall = "ReleaseSmall"
 
 
-def link_or_copy(src: Path, tgt: Path, force_copy: bool) -> None:
+def _link_or_copy(src: Path, tgt: Path, force_copy: bool) -> None:
     if IS_WINDOWS or force_copy:
         if src.is_file():
             copyfile(src, tgt)
@@ -67,7 +67,12 @@ def prepare(
     Link/Create files at path needed to compile the Zig code
 
     In order to get ZLS support for the Python C API, you can execute this and
-    develop inside the "inner" directory.
+    develop inside the specified path.
+
+    This function generates / overwrites the files "path / build.zig"
+    and "path / build.zig.zon" as well as the directory "path / zig_ext".
+
+    The entry point to your code is "path / root_source_file" and will not be overwritten.
     """
     if imports is None:
         imports = {}
@@ -77,7 +82,7 @@ def prepare(
     (path / "zig_ext").mkdir(exist_ok=True)
 
     for fp in _copy_files:
-        link_or_copy(Path(__file__).parent / fp, path / fp, force_copy)
+        _link_or_copy(Path(__file__).parent / fp, path / fp, force_copy)
 
     include_dirs = [sysconfig.get_path("include")]
     lib_paths = [
@@ -106,7 +111,7 @@ def prepare(
         if "path" in import_spec:
             import_path = import_spec["path"]
             import_path = Path(import_path).absolute()
-            link_or_copy(import_path, path / "zig_ext" / name, force_copy)
+            _link_or_copy(import_path, path / "zig_ext" / name, force_copy)
             import_spec["path"] = f"zig_ext/{name}"
 
     with (path / "build.zig.zon").open("w", encoding="utf-8") as f:
@@ -145,7 +150,10 @@ def compile_to(
     Same as import_zig, except that the module will not be imported an instead
     copied into the directory specified by `path_target`.
 
-    Further, `module_name` is not randomized.
+    `module_name` must be provided.
+
+    If you import different modules with the same module_name, you may run into
+    issues like segfaults.
     """
     if not module_name:
         raise Exception("module_name must be specified")
@@ -175,13 +183,13 @@ def compile_to(
                 raise FileNotFoundError(
                     f"Directory {p} must contain {directory['root_source_file']}"
                 )
-            link_or_copy(
+            _link_or_copy(
                 p,
                 temppath,
                 force_copy=True,
             )
         elif file is not None:
-            link_or_copy(
+            _link_or_copy(
                 Path(file).absolute(),
                 temppath / root_source_file,
                 force_copy=False,
@@ -198,6 +206,10 @@ def compile_prepared(
     cwd: str | Path,
     optimize: Optimize = Optimize.Debug,
 ):
+    """
+    `cwd` must be prepared with `prepare()`. The resulting binary will be
+    placed into `target_dir`.
+    """
     target_dir = Path(target_dir)
     cwd = Path(cwd)
     args = [
@@ -244,26 +256,28 @@ def import_zig(
 ):
     """
     This function takes in Zig code, wraps it in the Python C API, compiles the
-    code and returns the imported binary.
+    code and returns the imported binary as a python module.
 
     Assumptions on the code:
     The Zig source can be specified as a source code string, a file or a directory.
-    If it is specified as a directory, the file containin the functions which get
-    exported to Python must be named `import_fns.zig`, however that file may use
-    any other files present in the directory.
+    If it is specified as a directory, the `directory` dictionary must provide the
+    `path` to the directory as well as the `root_source_file` which is the file
+    containing the functions which get exported to Python. The `root_source_file`
+    may import any other Zig files inside the directory.
 
     A function gets exposed to Python if it is marked pub.
 
     It is possible to use
     ```
-    const pyu = @import("../py_utils.zig");
-    const py = pyu.py;
+    const c = @import("c");
+    const py = @import("py");
     ```
-    in order to access the Python C API with `py` and utilities with `pyu`. This
+    in order to access the Python C API with `c` and utilities with `py`. This
     allows for example raising exceptions or passing Python objects with
-    `*py.PyObject`.
+    `*c.PyObject`.
 
-    If module_name is left blank, a random name will be assigned.
+    If module_name is left blank, a random name will be assigned. Otherwise, you
+    may need to be careful to avoid using the same name twice to avoid weird crashes.
     """
     if module_name is None:
         module_name = f"zig_ext_{hex(random.randint(0, 2**128))[2:]}"

@@ -36,23 +36,26 @@ The file structure that will be generated to compile the Zig code looks as follo
 
 ```bash
 project_folder
+├── root_source_file.zig
 ├── build.zig
-├── generated.zig
-├── inner
-│   └── import_fns.zig
-├── py_utils.zig
-└── zig_ext.zig
+├── build.zig.zon
+└── zig_ext
+    ├── c.h
+    ├── generated.zig
+    ├── .gitignore
+    ├── py_utils.zig
+    └── zig_ext.zig
 ```
 
-The `inner` directory is where your code lives. When you pass a source code string or file path, it will be written / linked as the `import_fns.zig` file. When you pass a directory path, the directory will be linked as the `inner` directory above, enabling references to other files in the directory path.
+The `project_folder` and more specifically `root_source_file.zig` is where your code lives. When you pass a source code string or file path, it will be written / linked directly to `root_source_file.zig` file. When you pass a directory path alongside the file name of your root_source_file, the entire directory will be linked / copied, allowing use of multiple zig files and extended by the two `build.zig*` files as well as the `zig_ext` directory.
 
-The above file structure can be generated with:
+The above file structure (minus the `root_source_file.zig`) can be generated with:
 
 ```py
 import_zig.prepare("/path/to/project_folder", "module_name")
 ```
 
-This enables ZLS support for the Python C API when importing `py_utils` from `import_fns.zig`.
+This enables ZLS support for the Python C API when importing `c` or `py` from your `root_source_file`.
 
 # Type mapping
 
