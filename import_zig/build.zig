@@ -53,7 +53,8 @@ pub fn build(b: *std.Build) void {
     mod.addImport("py", py_mod);
     mod.addImport("src", src);
 
-    const lib = b.addSharedLibrary(.{
+    const lib = b.addLibrary(.{
+        .linkage = .dynamic,
         .name = "zig_ext",
         .root_module = mod,
     });
