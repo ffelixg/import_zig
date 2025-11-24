@@ -172,7 +172,6 @@ def compile_to(
         else:
             assert source_code is not None
             root_source_file = "import_fns.zig"
-        prepare(temppath, module_name, root_source_file, force_copy=False, imports=imports)
 
         if directory is not None:
             p = Path(directory["path"]).absolute()
@@ -194,6 +193,8 @@ def compile_to(
         else:
             with (temppath / root_source_file).open("w", encoding="utf-8") as f:
                 f.write(source_code)
+
+        prepare(temppath, module_name, root_source_file, force_copy=False, imports=imports)
 
         compile_prepared(target_dir, temppath, optimize=optimize)
 
