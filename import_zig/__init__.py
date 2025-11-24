@@ -109,10 +109,7 @@ def prepare(
 
     for name, import_spec in imports.items():
         if "path" in import_spec:
-            import_path = import_spec["path"]
-            import_path = Path(import_path).absolute()
-            _link_or_copy(import_path, path / "zig_ext" / name, force_copy)
-            import_spec["path"] = f"zig_ext/{name}"
+            import_spec["path"] = Path(import_spec["path"]).relative_to(path)
 
     with (path / "build.zig.zon").open("w", encoding="utf-8") as f:
         f.write(
