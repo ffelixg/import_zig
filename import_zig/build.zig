@@ -60,6 +60,10 @@ pub fn build(b: *std.Build) void {
     });
     lib.linkLibC();
 
+    if (target.result.os.tag == .linux and target.result.cpu.arch == .x86_64) {
+        lib.use_llvm = false;
+    }
+
     lib.linker_allow_shlib_undefined = true;
     b.installArtifact(lib);
 }
