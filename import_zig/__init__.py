@@ -10,10 +10,13 @@ import platform
 from enum import Enum
 import re
 import typing
+from os.path import relpath
+
 
 class DirectoryImport(typing.TypedDict):
     path: str | Path
     root_source_file: str
+
 
 _copy_files = [
     Path() / "build.zig",
@@ -25,6 +28,7 @@ _copy_files = [
 custom_zig_binary = None
 
 IS_WINDOWS = platform.system() == "Windows"
+
 
 class Optimize(Enum):
     Debug = "Debug"
@@ -61,7 +65,7 @@ def prepare(
     module_name: str,
     root_source_file: str,
     force_copy: bool = True,
-    imports: dict[str, dict[str, str | Path]] | None = None,
+    imports: typing.Mapping[str, typing.Mapping[str, str | Path]] | None = None,
 ) -> None:
     """
     Link/Create files at path needed to compile the Zig code
@@ -76,6 +80,8 @@ def prepare(
     """
     if imports is None:
         imports = {}
+    else:
+        imports = {k: dict(v) for k, v in imports.items()}
     path = Path(path)
     if not path.is_dir():
         raise FileNotFoundError(f"No such directory: {path}")
@@ -109,7 +115,11 @@ def prepare(
 
     for name, import_spec in imports.items():
         if "path" in import_spec:
-            import_spec["path"] = Path(import_spec["path"]).relative_to(path)
+            imports[name] = {
+                # Path.relative_to with walk_up=True would work in 3.12+
+                key: relpath(val, start=path) if key == "path" else val
+                for key, val in import_spec.items()
+            }
 
     with (path / "build.zig.zon").open("w", encoding="utf-8") as f:
         f.write(
@@ -119,13 +129,12 @@ def prepare(
             + '    .version = "0.0.0",\n'
             + "    .dependencies = .{\n"
             + "".join(
-                f'        .{name} = .{{\n'
+                f"        .{name} = .{{\n"
                 + "".join(
                     f'            .{key} = "{val}",\n'
                     for key, val in import_spec.items()
                 )
-                + '        },\n'
-        
+                + "        },\n"
                 for name, import_spec in imports.items()
             )
             + "    },\n"
@@ -139,8 +148,8 @@ def compile_to(
     module_name: str,
     source_code: str | None = None,
     file: Path | str | None = None,
-    directory: DirectoryImport = None,
-    imports: dict[str, dict[str, str | Path]] | None = None,
+    directory: DirectoryImport | None = None,
+    imports: typing.Mapping[str, typing.Mapping[str, str | Path]] | None = None,
     optimize: Optimize = Optimize.Debug,
 ):
     """
@@ -175,7 +184,7 @@ def compile_to(
 
         if directory is not None:
             p = Path(directory["path"]).absolute()
-            if not any(directory['root_source_file'] == f.name for f in p.iterdir()):
+            if not any(directory["root_source_file"] == f.name for f in p.iterdir()):
                 raise FileNotFoundError(
                     f"Directory {p} must contain {directory['root_source_file']}"
                 )
@@ -191,10 +200,13 @@ def compile_to(
                 force_copy=False,
             )
         else:
+            assert source_code is not None
             with (temppath / root_source_file).open("w", encoding="utf-8") as f:
                 f.write(source_code)
 
-        prepare(temppath, module_name, root_source_file, force_copy=False, imports=imports)
+        prepare(
+            temppath, module_name, root_source_file, force_copy=False, imports=imports
+        )
 
         compile_prepared(target_dir, temppath, optimize=optimize)
 
@@ -248,8 +260,8 @@ def import_zig(
     module_name: str | None = None,
     source_code: str | None = None,
     file: Path | str | None = None,
-    directory: DirectoryImport = None,
-    imports: dict[str, dict[str, str | Path]] | None = None,
+    directory: DirectoryImport | None = None,
+    imports: typing.Mapping[str, typing.Mapping[str, str | Path]] | None = None,
     optimize: Optimize = Optimize.Debug,
 ):
     """
