@@ -92,7 +92,7 @@ pub fn zig_to_py(value: anytype) !*py.PyObject {
         else if (info.size == .slice)
             toPyList(value) catch null
         else
-            unreachable,
+            @compileError(std.fmt.comptimePrint("Unsupported zig to python conversion for pointer type {}", .{info})),
         .@"struct" => |info| blk: {
             if (info.is_tuple) {
                 const tuple = py.PyTuple_New(info.fields.len) orelse return PyErr;
@@ -148,10 +148,7 @@ pub fn zig_to_py(value: anytype) !*py.PyObject {
             }
         },
         .null => py.Py_NewRef(py.Py_None()),
-        else => |info| {
-            @compileLog("unsupported py-type conversion", info);
-            comptime unreachable;
-        },
+        else => |info| @compileError(std.fmt.comptimePrint("Unsupported zig to python conversion for type {any}", .{info})),
     } orelse return PyErr;
 }
 

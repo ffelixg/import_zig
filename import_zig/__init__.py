@@ -14,6 +14,13 @@ from os.path import relpath
 
 
 class DirectoryImport(typing.TypedDict):
+    """
+    Directory-based Zig import configuration.
+
+    `path` points to a directory containing Zig sources and
+    `root_source_file` names the entry-point Zig file inside that directory.
+    """
+
     path: str | Path
     root_source_file: str
 
@@ -31,6 +38,8 @@ IS_WINDOWS = platform.system() == "Windows"
 
 
 class Optimize(Enum):
+    """Supported Zig build optimization modes."""
+
     Debug = "Debug"
     ReleaseSafe = "ReleaseSafe"
     ReleaseFast = "ReleaseFast"
@@ -68,15 +77,21 @@ def prepare(
     imports: typing.Mapping[str, typing.Mapping[str, str | Path]] | None = None,
 ) -> None:
     """
-    Link/Create files at path needed to compile the Zig code
+    Prepare an existing Zig project directory for Python extension builds.
 
-    In order to get ZLS support for the Python C API, you can execute this and
-    develop inside the specified path.
+    `path` must already exist. `root_source_file` names the entry-point Zig file
+    inside that directory and is not overwritten.
 
-    This function generates / overwrites the files "path / build.zig"
-    and "path / build.zig.zon" as well as the directory "path / zig_ext".
+    This generates or refreshes `build.zig`, `build.zig.zon`, and `zig_ext/` so
+    the project can be compiled against the current Python interpreter and used
+    with ZLS support for `@import("c")` and `@import("py")`.
 
-    The entry point to your code is "path / root_source_file" and will not be overwritten.
+    `imports`, when provided, is written into `build.zig.zon` as Zig package
+    dependencies. Any `path` entry inside an import spec is rewritten relative
+    to the prepared directory.
+
+    On non-Windows platforms files are symlinked unless `force_copy=True`.
+    On Windows files are always copied.
     """
     if imports is None:
         imports = {}
@@ -90,7 +105,31 @@ def prepare(
     for fp in _copy_files:
         _link_or_copy(Path(__file__).parent / fp, path / fp, force_copy)
 
-    include_dirs = [sysconfig.get_path("include")]
+    doc_str_install = (
+        "Please ensure Python development headers are installed.\n"
+        "Installation commands:\n"
+        "  Ubuntu/Debian: sudo apt-get install python3-dev\n"
+        "  Fedora/CentOS/RHEL: sudo dnf install python3-devel\n"
+        "  macOS: Install Python from python.org or use 'brew install python'\n"
+        "  Windows: Ensure you have the Python development package from python.org"
+    )
+    try:
+        include_dir = sysconfig.get_path("include")
+    except KeyError:
+        raise RuntimeError(
+            "Python include path not found. " + doc_str_install
+        ) from None
+    include_path = Path(include_dir)
+    if not include_path.exists():
+        raise RuntimeError(
+            f"Python include path {include_path} does not exist. " + doc_str_install
+        )
+    if not list(include_path.rglob("Python.h")):
+        raise RuntimeError(
+            f"Python.h not found in {include_path} or its subdirectories. "
+            + doc_str_install
+        )
+    include_dirs = [include_dir]
     lib_paths = [
         str(Path(sysconfig.get_config_var("installed_base"), "Libs").absolute())
     ]
@@ -153,13 +192,18 @@ def compile_to(
     optimize: Optimize = Optimize.Debug,
 ):
     """
-    Same as import_zig, except that the module will not be imported an instead
-    copied into the directory specified by `path_target`.
+    Compile a Zig extension into `target_dir` without importing it.
 
-    `module_name` must be provided.
+    Exactly one of `source_code`, `file`, or `directory` must be provided.
+    `module_name` is required and determines the filename of the compiled
+    extension module.
 
-    If you import different modules with the same module_name, you may run into
-    issues like segfaults.
+    `directory` must be a `DirectoryImport` mapping with `path` and
+    `root_source_file`. `imports` is forwarded to `prepare()` and written into
+    the generated `build.zig.zon`. `optimize` selects the Zig optimization mode.
+
+    Reusing the same `module_name` for different binaries in one Python process
+    is unsafe and may lead to crashes if both are later imported.
     """
     if not module_name:
         raise Exception("module_name must be specified")
@@ -217,8 +261,11 @@ def compile_prepared(
     optimize: Optimize = Optimize.Debug,
 ):
     """
-    `cwd` must be prepared with `prepare()`. The resulting binary will be
-    placed into `target_dir`.
+    Compile a directory previously prepared by `prepare()`.
+
+    `cwd` must contain the generated `build.zig`, `build.zig.zon`, and `zig_ext`
+    scaffolding. The resulting extension module is copied into `target_dir` with
+    the extension suffix for the active Python interpreter.
     """
     target_dir = Path(target_dir)
     cwd = Path(cwd)
@@ -265,29 +312,22 @@ def import_zig(
     optimize: Optimize = Optimize.Debug,
 ):
     """
-    This function takes in Zig code, wraps it in the Python C API, compiles the
-    code and returns the imported binary as a python module.
+    Compile Zig code into a CPython extension module and import it.
 
-    Assumptions on the code:
-    The Zig source can be specified as a source code string, a file or a directory.
-    If it is specified as a directory, the `directory` dictionary must provide the
-    `path` to the directory as well as the `root_source_file` which is the file
-    containing the functions which get exported to Python. The `root_source_file`
-    may import any other Zig files inside the directory.
+    Exactly one of `source_code`, `file`, or `directory` must be provided.
+    When using `directory`, pass a `DirectoryImport` mapping with `path` and
+    `root_source_file` so the entry-point Zig file can be identified.
 
-    A function gets exposed to Python if it is marked pub.
+    Exported `pub fn` functions are exposed to Python. Inside Zig code you may
+    use `@import("c")` for the Python C API and `@import("py")` for the helper
+    utilities bundled with this package.
 
-    It is possible to use
-    ```
-    const c = @import("c");
-    const py = @import("py");
-    ```
-    in order to access the Python C API with `c` and utilities with `py`. This
-    allows for example raising exceptions or passing Python objects with
-    `*c.PyObject`.
+    `imports` is forwarded into the generated `build.zig.zon` dependency list and
+    `optimize` selects the Zig optimization mode.
 
-    If module_name is left blank, a random name will be assigned. Otherwise, you
-    may need to be careful to avoid using the same name twice to avoid weird crashes.
+    If `module_name` is omitted, a random unique name is generated. Reusing a
+    fixed `module_name` for different binaries in one Python process is unsafe
+    and can lead to crashes.
     """
     if module_name is None:
         module_name = f"zig_ext_{hex(random.randint(0, 2**128))[2:]}"
