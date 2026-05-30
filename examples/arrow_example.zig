@@ -6,7 +6,7 @@ const py = pyu.py;
 
 // Arrow moves the data buffers from producers to
 // consumers, so the raw_c_allocator is forced
-const ally = std.heap.raw_c_allocator;
+const ally = std.heap.c_allocator;
 
 /// If format or name are not static strings, this is where you free them
 fn release_schema(self: *ArrowSchema) callconv(.c) void {

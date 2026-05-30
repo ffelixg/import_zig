@@ -49,7 +49,7 @@ var zig_ext_methods = blk: {
 
         const wrapper = struct {
             fn wrapper(_: ?*py.PyObject, py_args: [*]*py.PyObject, n_py_args_runtime: isize) callconv(.c) ?*py.PyObject {
-                var arena = std.heap.ArenaAllocator.init(std.heap.raw_c_allocator);
+                var arena = std.heap.ArenaAllocator.init(std.heap.c_allocator);
                 defer arena.deinit();
                 const allocator = arena.allocator();
                 var args: arg_type = undefined;

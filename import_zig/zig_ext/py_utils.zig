@@ -13,8 +13,8 @@ pub fn raise(exc: Exceptions, comptime msg: []const u8, args: anytype) error{PyE
         .TypeError => py.PyExc_TypeError,
         .ValueError => py.PyExc_ValueError,
     };
-    const formatted = std.fmt.allocPrintSentinel(std.heap.raw_c_allocator, msg, args, 0) catch "Error formatting error message";
-    defer std.heap.raw_c_allocator.free(formatted);
+    const formatted = std.fmt.allocPrintSentinel(std.heap.c_allocator, msg, args, 0) catch "Error formatting error message";
+    defer std.heap.c_allocator.free(formatted);
 
     // new in Python 3.12, for older versions we just overwrite exceptions.
     if (@hasField(py, "PyErr_GetRaisedException")) {
@@ -35,14 +35,14 @@ pub fn PyCapsule(T: type, name: [*c]const u8, deinit: ?*const fn (*T) callconv(.
     return struct {
         fn py_free(capsule: ?*py.PyObject) callconv(.c) void {
             const ptr = read_capsule(capsule orelse unreachable) catch unreachable;
-            defer std.heap.raw_c_allocator.destroy(ptr);
+            defer std.heap.c_allocator.destroy(ptr);
             if (deinit != null) deinit.?(ptr);
         }
         pub fn read_capsule(capsule: *py.PyObject) !*T {
             return @ptrCast(@alignCast(py.PyCapsule_GetPointer(capsule, name) orelse return PyErr));
         }
         pub fn create_capsule(data: T) !*py.PyObject {
-            const ptr = std.heap.raw_c_allocator.create(T) catch {
+            const ptr = std.heap.c_allocator.create(T) catch {
                 _ = py.PyErr_NoMemory();
                 return PyErr;
             };
@@ -69,7 +69,7 @@ fn toPyList(value: anytype) !*py.PyObject {
     return pylist;
 }
 
-var struct_tuple_map = std.StringHashMap(?*py.PyTypeObject).init(std.heap.raw_c_allocator);
+var struct_tuple_map = std.StringHashMap(?*py.PyTypeObject).init(std.heap.c_allocator);
 
 /// Steals a reference when passed PyObjects
 pub fn zig_to_py(value: anytype) !*py.PyObject {
@@ -286,10 +286,10 @@ pub fn py_to_zig(zig_type: type, py_value: *py.PyObject, allocator: ?std.mem.All
             }
         },
         .@"enum" => |info| {
-            return std.meta.intToEnum(
+            return std.enums.fromInt(
                 zig_type,
                 try py_to_zig(info.tag_type, py_value, allocator),
-            ) catch raise(.ValueError, "Expected value to fit into enum {s}", .{@typeName(zig_type)});
+            ) orelse raise(.ValueError, "Expected value to fit into enum {s}", .{@typeName(zig_type)});
         },
         else => {},
     }

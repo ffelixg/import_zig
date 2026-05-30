@@ -15,6 +15,7 @@ pub fn build(b: *std.Build) void {
     }
 
     const c_mod = c_tran.createModule();
+    c_mod.link_libc = true;
     if (target.query.os_tag == .windows) {
         inline for (generated.lib) |path| {
             c_mod.addLibraryPath(.{ .cwd_relative = path });
@@ -58,7 +59,6 @@ pub fn build(b: *std.Build) void {
         .name = "zig_ext",
         .root_module = mod,
     });
-    lib.linkLibC();
 
     if (target.result.os.tag == .linux and target.result.cpu.arch == .x86_64) {
         lib.use_llvm = false;
